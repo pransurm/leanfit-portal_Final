@@ -1,6 +1,5 @@
 import datetime
 from typing import Optional
-from google.cloud import storage
 from api.config import settings
 
 _storage_client = None
@@ -9,6 +8,7 @@ def get_storage_client():
     global _storage_client
     if _storage_client is None:
         try:
+            from google.cloud import storage
             _storage_client = storage.Client(project=settings.PROJECT_ID)
         except Exception:
             _storage_client = None

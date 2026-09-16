@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any
 from fastapi import Header, HTTPException, Depends, status
-from firebase_admin import auth as firebase_auth
+from api.config import settings
 from api.database import get_db
 
 class AuthenticatedUser:
@@ -20,18 +20,30 @@ async def get_current_user(
 ) -> AuthenticatedUser:
     """
     Validates Firebase ID Token from Authorization header.
-    In local development / demo mode, allows demo headers if configured.
+    
+    SECURITY ENFORCEMENT:
+    1. In production (default): ONLY valid Firebase ID tokens are accepted. Any request without
+       a valid Firebase Bearer token is rejected with HTTP 401 Unauthorized. Demo headers are ignored.
+    2. In local dev (only when ENVIRONMENT=development AND ENABLE_DEMO_AUTH=true):
+       Optional X-Demo-User header can be used for offline developer testing without active GCP keys.
     """
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split("Bearer ")[1].strip()
+    # 1. Primary path: Firebase ID token verification
+    if authorization:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Authorization header format. Expected 'Bearer <token>'."
+            )
+        token = authorization.split("Bearer ", 1)[1].strip()
         try:
+            from firebase_admin import auth as firebase_auth
             decoded_token = firebase_auth.verify_id_token(token)
             uid = decoded_token.get("uid")
             email = decoded_token.get("email", "")
             role = decoded_token.get("role", "client")
             client_id = decoded_token.get("clientId", uid)
 
-            # If role is not in token custom claims, check users/{uid}
+            # If role is not in token custom claims, check users/{uid} document
             if not decoded_token.get("role"):
                 db = get_db()
                 user_doc = db.collection("users").document(uid).get()
@@ -42,17 +54,25 @@ async def get_current_user(
 
             return AuthenticatedUser(uid=uid, email=email, role=role, client_id=client_id)
         except Exception as e:
-            # If demo token or invalid
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid or expired Firebase ID token: {str(e)}"
+            )
 
-    # Demo fallback for instant UI preview & developer testing
-    if x_demo_user:
-        if x_demo_user.lower() in ("coach", "ram"):
-            return AuthenticatedUser(uid="coach_ram", email="ram@leanfit.io", role="coach", client_id="coach_ram")
-        return AuthenticatedUser(uid=x_demo_user, email=f"{x_demo_user}@leanfit.io", role="client", client_id=x_demo_user)
+    # 2. Local development fallback — strictly gated by settings.ENABLE_DEMO_AUTH
+    if settings.ENABLE_DEMO_AUTH:
+        if x_demo_user:
+            if x_demo_user.lower() in ("coach", "ram"):
+                return AuthenticatedUser(uid="coach_ram", email="ram@leanfit.io", role="coach", client_id="coach_ram")
+            return AuthenticatedUser(uid=x_demo_user, email=f"{x_demo_user}@leanfit.io", role="client", client_id=x_demo_user)
+        return AuthenticatedUser(uid="ankit", email="ankit@leanfit.io", role="client", client_id="ankit")
 
-    # If demo mode is allowed or mock user
-    return AuthenticatedUser(uid="ankit", email="ankit@leanfit.io", role="client", client_id="ankit")
+    # In production or whenever ENABLE_DEMO_AUTH is False:
+    # HARD REJECTION: Demo headers are rejected, and missing Bearer token raises 401.
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required. Please provide a valid Firebase ID token in the Authorization header."
+    )
 
 async def require_coach(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
     if not user.is_coach:

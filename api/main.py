@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -277,7 +277,7 @@ def post_checkin(payload: CheckInPayload, user: AuthenticatedUser = Depends(get_
         "bed": payload.bed or "",
         "wake": payload.wake or "",
         "note": payload.note or "",
-        "createdAt": datetime.utcnow().isoformat()
+        "createdAt": datetime.now(timezone.utc).isoformat()
     }
 
     # Save idempotent daily checkin
@@ -314,7 +314,7 @@ def post_checkin(payload: CheckInPayload, user: AuthenticatedUser = Depends(get_
         "streak": streak,
         "adherence": adh,
         "trafficLight": tl,
-        "updatedAt": datetime.utcnow().isoformat()
+        "updatedAt": datetime.now(timezone.utc).isoformat()
     }, merge=True)
 
     return {
@@ -346,7 +346,7 @@ def post_measurement(payload: MeasurementPayload, user: AuthenticatedUser = Depe
 
     meas_data = {
         "week": payload.week,
-        "date": payload.date or datetime.utcnow().strftime("%d %b %Y"),
+        "date": payload.date or datetime.now(timezone.utc).strftime("%d %b %Y"),
         "arms": payload.arms,
         "waist": payload.waist,
         "quads": payload.quads,
@@ -358,7 +358,7 @@ def post_measurement(payload: MeasurementPayload, user: AuthenticatedUser = Depe
         "photoFrontGcsPath": payload.photoFrontGcsPath,
         "photoSideGcsPath": payload.photoSideGcsPath,
         "photoBackGcsPath": payload.photoBackGcsPath,
-        "createdAt": datetime.utcnow().isoformat()
+        "createdAt": datetime.now(timezone.utc).isoformat()
     }
 
     meas_id = f"week_{payload.week}"
@@ -375,13 +375,13 @@ def post_win(payload: WinPayload, user: AuthenticatedUser = Depends(get_current_
 
     win_data = {
         "week": payload.week,
-        "date": payload.date or datetime.utcnow().strftime("%d %b %Y"),
+        "date": payload.date or datetime.now(timezone.utc).strftime("%d %b %Y"),
         "emoji": payload.emoji,
         "text": payload.text,
-        "createdAt": datetime.utcnow().isoformat()
+        "createdAt": datetime.now(timezone.utc).isoformat()
     }
 
-    win_id = f"win_{payload.week}_{int(datetime.utcnow().timestamp())}"
+    win_id = f"win_{payload.week}_{int(datetime.now(timezone.utc).timestamp())}"
     client_ref.collection("wins").document(win_id).set(win_data)
     return {"status": "ok", "win": win_data}
 
@@ -440,8 +440,8 @@ def confirm_report_upload(payload: ReportConfirmPayload, user: AuthenticatedUser
         "gcsPath": payload.gcsPath,
         "sizeBytes": payload.sizeBytes,
         "sizeDisp": payload.sizeDisp or f"{round(payload.sizeBytes / (1024 * 1024), 1)} MB",
-        "date": payload.date or datetime.utcnow().strftime("%d %b %Y"),
-        "uploadedAt": datetime.utcnow().isoformat()
+        "date": payload.date or datetime.now(timezone.utc).strftime("%d %b %Y"),
+        "uploadedAt": datetime.now(timezone.utc).isoformat()
     }
 
     client_ref.collection("reports").document(report_id).set(report_data)
@@ -555,7 +555,7 @@ def update_client_plans(client_id: str, payload: PlanUpdatePayload, user: Authen
     client_ref = db.collection("clients").document(client_id)
 
     updates = {
-        "plansUpdatedAt": datetime.utcnow().isoformat()
+        "plansUpdatedAt": datetime.now(timezone.utc).isoformat()
     }
     if payload.nutriPlan is not None:
         updates["nutriPlan"] = payload.nutriPlan
@@ -575,7 +575,7 @@ def update_client_status(client_id: str, payload: StatusUpdatePayload, user: Aut
         "status": payload.status,
         "pauseReason": payload.pauseReason if payload.status == "paused" else None,
         "resumeDate": payload.resumeDate if payload.status == "paused" else None,
-        "updatedAt": datetime.utcnow().isoformat()
+        "updatedAt": datetime.now(timezone.utc).isoformat()
     }
     client_ref.set(updates, merge=True)
     return {"status": "ok", "status": payload.status}
@@ -585,7 +585,7 @@ def update_client_status(client_id: str, payload: StatusUpdatePayload, user: Aut
 def update_coach_notes(client_id: str, payload: NoteUpdatePayload, user: AuthenticatedUser = Depends(require_coach)):
     db = get_db()
     client_ref = db.collection("clients").document(client_id)
-    client_ref.set({"coachNote": payload.coachNote, "updatedAt": datetime.utcnow().isoformat()}, merge=True)
+    client_ref.set({"coachNote": payload.coachNote, "updatedAt": datetime.now(timezone.utc).isoformat()}, merge=True)
     return {"status": "ok"}
 
 
@@ -616,7 +616,7 @@ def create_client_roster_entry(payload: ClientCreatePayload, user: Authenticated
         "daysSince": 0,
         "checkedIn": False,
         "trafficLight": "g",
-        "createdAt": datetime.utcnow().isoformat()
+        "createdAt": datetime.now(timezone.utc).isoformat()
     }
     client_ref.set(data, merge=True)
     return {"status": "ok", "clientId": client_id}

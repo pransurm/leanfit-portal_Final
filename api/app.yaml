@@ -10,3 +10,5 @@ automatic_scaling:
 env_variables:
   GCP_PROJECT: "leanfit-portal"
   GCS_BUCKET: "leanfit-portal.appspot.com"
+  ENVIRONMENT: "production"
+  ENABLE_DEMO_AUTH: "false"
