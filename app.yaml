@@ -1,0 +1,27 @@
+# Google App Engine Standard — Python 3.11, F1 instance (free-tier eligible)
+# Serves the Vite-built React SPA from dist/
+runtime: python311
+instance_class: F1
+
+automatic_scaling:
+  min_instances: 0          # scale to zero when idle -> no cost
+  max_instances: 2
+  target_cpu_utilization: 0.75
+
+handlers:
+  # Hashed build assets — safe to cache hard
+  - url: /assets
+    static_dir: dist/assets
+    secure: always
+    expiration: "365d"
+
+  - url: /(.*\.(ico|png|jpg|jpeg|svg|webp|txt|webmanifest))$
+    static_files: dist/\1
+    upload: dist/.*\.(ico|png|jpg|jpeg|svg|webp|txt|webmanifest)$
+    secure: always
+    expiration: "7d"
+
+  # Everything else -> Flask, which returns index.html (SPA client-side routing)
+  - url: /.*
+    script: auto
+    secure: always

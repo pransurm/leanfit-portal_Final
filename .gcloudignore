@@ -1,0 +1,14 @@
+.gcloudignore
+.git/
+.gitignore
+node_modules/
+src/
+index.html
+vite.config.js
+package.json
+package-lock.json
+README.md
+.env
+.env.*
+*.log
+__pycache__/
