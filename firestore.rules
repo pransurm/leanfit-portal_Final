@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isCoach() {
+      return isAuthenticated() && request.auth.token.role == 'coach';
+    }
+    
+    function isClientOwner(clientId) {
+      return isAuthenticated() && (request.auth.uid == clientId || request.auth.token.clientId == clientId);
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isCoach());
+      allow write: if isCoach() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // Clients collection & subcollections
+    match /clients/{clientId} {
+      // Coach has full read/write. Client can read their own doc (coachNote stripped via API layer).
+      // Client updates cannot touch coach-managed fields.
+      allow read: if isCoach() || isClientOwner(clientId);
+      allow update: if isCoach() || (
+        isClientOwner(clientId) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'coachNote', 'nutriPlan', 'workPlan', 'coachStepsGoal', 'status', 'pauseReason', 'resumeDate'
+        ])
+      );
+      allow create, delete: if isCoach();
+
+      match /checkins/{checkinId} {
+        allow read: if isCoach() || isClientOwner(clientId);
+        allow write: if isCoach() || isClientOwner(clientId);
+      }
+
+      match /measurements/{measId} {
+        allow read: if isCoach() || isClientOwner(clientId);
+        allow write: if isCoach() || isClientOwner(clientId);
+      }
+
+      match /reports/{reportId} {
+        allow read: if isCoach() || isClientOwner(clientId);
+        allow write: if isCoach() || isClientOwner(clientId);
+      }
+
+      match /wins/{winId} {
+        allow read: if isCoach() || isClientOwner(clientId);
+        allow write: if isCoach() || isClientOwner(clientId);
+      }
+
+      match /onboarding/{docId} {
+        allow read: if isCoach() || isClientOwner(clientId);
+        allow write: if isCoach() || isClientOwner(clientId);
+      }
+    }
+  }
+}

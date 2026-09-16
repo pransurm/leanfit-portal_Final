@@ -12,3 +12,4 @@ README.md
 .env.*
 *.log
 __pycache__/
+api/
