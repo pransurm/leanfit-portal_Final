@@ -1,5 +1,22 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
+import { 
+  fetchClientData, 
+  submitCheckIn, 
+  submitMeasurement, 
+  submitWin, 
+  submitOnboarding, 
+  getReportUploadUrl, 
+  confirmReportUpload, 
+  uploadFileToSignedUrl, 
+  fetchCoachRoster, 
+  updateCoachPlans, 
+  updateCoachStatus, 
+  updateCoachNotes,
+  setDemoUser
+} from "./services/api";
+import { auth, loginWithEmail, logoutUser } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 /* ═══ THEMES ═══════════════════════════════════════════════ */
 const THEMES = {
@@ -270,11 +287,7 @@ function validateCheckIn(form, isMeasDay, measForm) {
   if (form.multi===null) errors.push("Multivitamin");
   if (!form.steps) errors.push("Step Count");
   if (form.wrk===null) errors.push("Workouts Completed");
-  if (isMeasDay) {
-    ["mWaist","mArms","mQuads","mChest","mShoulders","mHips","mNeck"].forEach(k=>{
-      if (!measForm[k]) errors.push(`Weekly Measurement: ${MEAS_PARTS.find(p=>p.k===k)?.l||k}`);
-    });
-  }
+  // Weekly measurements and photos are optional as per client preference
   return errors;
 }
 
@@ -301,13 +314,60 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   const neckCm  = effUnit==="inches"?+(+measForm.mNeck*2.54).toFixed(1):measForm.mNeck;
   const autoBF  = calcBF(waistCm,neckCm,CLI.height);
 
-  const submit = () => {
+  const submit = async () => {
     const errs = validateCheckIn(form, isMeasDay, measForm);
     if (errs.length) { setErrors(errs); window.scrollTo(0,0); return; }
     setErrors([]);
     const storedW = fromUnit(form.w, unit);
     if (!weightUnit&&pendingUnit) setWeightUnit(pendingUnit);
-    const entry = {date:"8/9",w:storedW,e:form.e,sl:form.sl,st:form.st,steps:+form.steps,wrk:form.wrk??weekWorkouts,water:form.water,meals:form.meals,mealNote:form.meals<=3?form.mealNote:"",multi:form.multi===true,note:form.note,photos:isMeasDay?photos:null};
+    
+    // Standardized DD-MM-YYYY format across all countries
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const fullDate = `${pad(now.getDate())}-${pad(now.getMonth()+1)}-${now.getFullYear()}`;
+    const displayDate = `${now.getDate()}/${now.getMonth()+1}`;
+
+    const entry = {
+      date: displayDate,
+      fullDate,
+      w: storedW,
+      e: form.e,
+      sl: form.sl,
+      st: form.st,
+      steps: +form.steps,
+      wrk: form.wrk??weekWorkouts,
+      water: form.water,
+      meals: form.meals,
+      mealNote: form.meals<=3?form.mealNote:"",
+      multi: form.multi===true,
+      note: form.note,
+      photos: isMeasDay?photos:null
+    };
+
+    try {
+      await submitCheckIn(entry);
+    } catch (err) {
+      console.warn("Backend checkin sync:", err.message);
+    }
+
+    if (isMeasDay && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front)) {
+      try {
+        await submitMeasurement({
+          week: CLI.week,
+          date: fullDate,
+          arms: measForm.mArms ? +measForm.mArms : null,
+          waist: measForm.mWaist ? +measForm.mWaist : null,
+          quads: measForm.mQuads ? +measForm.mQuads : null,
+          chest: measForm.mChest ? +measForm.mChest : null,
+          shoulders: measForm.mShoulders ? +measForm.mShoulders : null,
+          hips: measForm.mHips ? +measForm.mHips : null,
+          neck: measForm.mNeck ? +measForm.mNeck : null
+        });
+      } catch (err) {
+        console.warn("Backend measurement sync:", err.message);
+      }
+    }
+
     setData(d=>[...d,entry]);
     setSubmitted(true);
   };
@@ -598,6 +658,20 @@ function CoachDashboard({D, onBack, plans, setPlans}) {
   const [clients, setClients] = useState(COACH_CLIENTS);
   const [tlFilter, setTlFilter] = useState("all");
 
+  useEffect(() => {
+    async function loadRoster() {
+      try {
+        const res = await fetchCoachRoster();
+        if (res.clients && res.clients.length > 0) {
+          setClients(res.clients);
+        }
+      } catch (err) {
+        console.warn("Could not load coach roster from API:", err.message);
+      }
+    }
+    loadRoster();
+  }, []);
+
   // Command Centre stats
   const active=clients.filter(c=>c.status==="active").length;
   const checkedIn=clients.filter(c=>c.checkedIn&&c.status==="active").length;
@@ -645,16 +719,36 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
     const alertColor=(lvl)=>({r:D.r,am:D.am,g:D.g}[lvl]||D.ts);
     const clientAdh=calcAdh(SEED.slice(-7), CLI.coachStepsGoal); // use SEED as proxy
     const tl=trafficLight(c);
+    const clientId = c.id ? String(c.id).toLowerCase() : c.name.toLowerCase().replace(" ", "_");
 
-    const applyPause=()=>{
+    const applyPause=async ()=>{
+      try {
+        await updateCoachStatus(clientId, { status: "paused", pauseReason, resumeDate });
+        if (coachNote) await updateCoachNotes(clientId, coachNote);
+      } catch (e) {
+        console.warn("Pause status sync:", e.message);
+      }
       setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,status:"paused",pauseReason,resumeDate,note:coachNote}:cl));
       setLocalStatus("paused");setShowPause(false);
     };
-    const applyResume=()=>{
+    const applyResume=async ()=>{
+      try {
+        await updateCoachStatus(clientId, { status: "active", pauseReason: "", resumeDate: "" });
+      } catch (e) {
+        console.warn("Resume status sync:", e.message);
+      }
       setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,status:"active",pauseReason:"",resumeDate:""}:cl));
       setLocalStatus("active");
     };
-    const pushPlan=(kind)=>{
+    const pushPlan=async (kind)=>{
+      try {
+        await updateCoachPlans(clientId, {
+          nutriPlan: kind==="nutrition"?nutriDraft:undefined,
+          workPlan: kind==="workout"?workDraft:undefined
+        });
+      } catch (e) {
+        console.warn("Push plan sync:", e.message);
+      }
       setPlans(p=>({...p,[kind]:kind==="nutrition"?nutriDraft:workDraft}));
       setPushed(kind); setTimeout(()=>setPushed(""),2500);
     };
@@ -786,7 +880,14 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
           <GCard D={D}>
             <SL D={D}>Coach Notes (Private)</SL>
             <Ta D={D} value={coachNote} onChange={setCoachNote} placeholder="Private notes about this client — visible only to you. E.g. stress triggers, family context, business pressures..." rows={4}/>
-            <button onClick={()=>setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,note:coachNote}:cl))} style={{marginTop:10,width:"100%",padding:10,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:10,color:D.acc,fontWeight:700,fontSize:13,cursor:"pointer"}}>Save Notes</button>
+            <button onClick={async ()=>{
+              try {
+                await updateCoachNotes(clientId, coachNote);
+              } catch (e) {
+                console.warn("Coach note sync error:", e.message);
+              }
+              setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,note:coachNote}:cl));
+            }} style={{marginTop:10,width:"100%",padding:10,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:10,color:D.acc,fontWeight:700,fontSize:13,cursor:"pointer"}}>Save Notes</button>
           </GCard>
         </div>
       </div>
@@ -1040,11 +1141,34 @@ function PlanSub({D,plan,c,empty}) {
 
 function BloodReportsSub({D}) {
   const [reports,setReports]=useState([]);
+  const [uploading,setUploading]=useState(false);
   const fileRef=useRef(null);
-  const handleUpload=(e)=>{
+  const handleUpload=async (e)=>{
     const f=e.target.files[0]; if(!f) return;
-    setReports(r=>[{name:f.name,size:(f.size/1024/1024).toFixed(2)+" MB",date:new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})},...r]);
-    e.target.value="";
+    setUploading(true);
+    try {
+      const { uploadUrl, gcsPath } = await getReportUploadUrl(f.name, f.type);
+      await uploadFileToSignedUrl(uploadUrl, f, f.type);
+      const res = await confirmReportUpload({
+        name: f.name,
+        gcsPath,
+        sizeBytes: f.size,
+        sizeDisp: (f.size/1024/1024).toFixed(2)+" MB",
+        date: new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})
+      });
+      setReports(r=>[res.report || {
+        name: f.name,
+        size: (f.size/1024/1024).toFixed(2)+" MB",
+        date: new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}),
+        downloadUrl: uploadUrl
+      }, ...r]);
+    } catch (err) {
+      console.warn("Storage upload fallback:", err.message);
+      setReports(r=>[{name:f.name,size:(f.size/1024/1024).toFixed(2)+" MB",date:new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})},...r]);
+    } finally {
+      setUploading(false);
+      e.target.value="";
+    }
   };
   const remove=(i)=>setReports(r=>r.filter((_,j)=>j!==i));
   return <>
@@ -1052,15 +1176,20 @@ function BloodReportsSub({D}) {
       <input ref={fileRef} type="file" accept="application/pdf,.pdf" onChange={handleUpload} style={{display:"none"}}/>
       <div style={{width:52,height:52,borderRadius:14,background:D.rG,border:`1px solid ${D.r}30`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}><Ic.Upload c={D.r} sz={24}/></div>
       <div style={{fontSize:13,color:D.t,fontWeight:700,marginBottom:4}}>Upload Blood Report</div>
-      <div style={{fontSize:11,color:D.ts,marginBottom:16}}>PDF only · Markers dashboard coming soon</div>
-      <button onClick={()=>fileRef.current?.click()} style={{padding:"11px 20px",background:D.r,border:"none",borderRadius:12,color:"white",fontWeight:700,fontSize:13,cursor:"pointer"}}>Choose PDF</button>
+      <div style={{fontSize:11,color:D.ts,marginBottom:16}}>PDF only · Uploaded directly to private Cloud Storage</div>
+      <button onClick={()=>fileRef.current?.click()} disabled={uploading} style={{padding:"11px 20px",background:D.r,border:"none",borderRadius:12,color:"white",fontWeight:700,fontSize:13,cursor:uploading?"not-allowed":"pointer",opacity:uploading?0.7:1}}>
+        {uploading ? "Uploading to Cloud Storage..." : "Choose PDF"}
+      </button>
     </GCard>
     {reports.length===0
       ? <div style={{textAlign:"center",fontSize:12,color:D.tm,padding:20}}>No reports uploaded yet.</div>
       : reports.map((r,i)=>(
         <GCard key={i} D={D} style={{marginBottom:8,padding:14,display:"flex",alignItems:"center",gap:12}}>
           <div style={{width:38,height:38,borderRadius:10,background:D.rG,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic.FilePdf c={D.r} sz={18}/></div>
-          <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:700,color:D.t,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</div><div style={{fontSize:10,color:D.ts,marginTop:2}}>{r.date} · {r.size}</div></div>
+          <div style={{flex:1,minWidth:0,cursor:r.downloadUrl?"pointer":"default"}} onClick={()=>r.downloadUrl&&window.open(r.downloadUrl,"_blank")}>
+            <div style={{fontSize:12,fontWeight:700,color:D.t,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</div>
+            <div style={{fontSize:10,color:D.ts,marginTop:2}}>{r.date} · {r.size} {r.downloadUrl?"· Click to view":""}</div>
+          </div>
           <button onClick={()=>remove(i)} style={{background:"none",border:"none",cursor:"pointer",padding:4}}><Ic.Trash c={D.tm} sz={15}/></button>
         </GCard>
       ))}
@@ -1187,7 +1316,7 @@ function OnboardingScreen({D,onComplete}) {
     true,
     true,
     !!form.goal,
-    !!form.mWaist,
+    true, // Body measurements optional
     true,
   ][step] ?? true;
 
@@ -1424,6 +1553,26 @@ function OnboardingScreen({D,onComplete}) {
 }
 
 function LoginScreen({D,onPortal,onOnboard,onCoach}) {
+  const [showEmail, setShowEmail] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleEmailLogin = async (e) => {
+    e?.preventDefault();
+    if (!email || !password) return;
+    setLoading(true);
+    setAuthError("");
+    const { user, error } = await loginWithEmail(email, password);
+    setLoading(false);
+    if (error) {
+      setAuthError(error);
+    } else {
+      onPortal();
+    }
+  };
+
   return <div style={{minHeight:"100vh",background:D.bg,display:"flex",flexDirection:"column",fontFamily:"-apple-system,system-ui,sans-serif",position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",top:-80,left:"30%",width:300,height:300,borderRadius:"50%",background:`radial-gradient(circle,${D.accG} 0%,transparent 70%)`,pointerEvents:"none"}}/>
     <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"space-between",padding:"64px 28px 48px",position:"relative"}}>
@@ -1433,9 +1582,42 @@ function LoginScreen({D,onPortal,onOnboard,onCoach}) {
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{["Check-In","Progress","Wins","Body Fat","Inch Loss","Weekly Measurements","Coach View"].map(t=><span key={t} style={{background:D.accG,border:`1px solid ${D.brd}`,borderRadius:20,padding:"5px 12px",fontSize:11,color:D.ts}}>{t}</span>)}</div>
       </div>
       <div>
-        <button onClick={onPortal} style={{width:"100%",padding:16,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:"pointer",marginBottom:10,boxShadow:`0 0 28px ${D.accG}`}}>Sign In To Portal (Demo)</button>
-        <button onClick={onOnboard} style={{width:"100%",padding:14,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:14,fontSize:14,fontWeight:600,color:D.acc,cursor:"pointer",marginBottom:10}}>New Client — Start Onboarding</button>
-        <button onClick={onCoach} style={{width:"100%",padding:12,background:"transparent",border:`1px solid ${D.brd}`,borderRadius:12,fontSize:13,fontWeight:600,color:D.ts,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}><Ic.Coach c={D.tm} sz={15}/> Coach Login — Ram Dixit</button>
+        {authError && (
+          <div style={{padding:"8px 12px",borderRadius:10,background:D.rG,border:`1px solid ${D.r}40`,color:D.r,fontSize:11,marginBottom:10}}>
+            {authError}
+          </div>
+        )}
+        {showEmail ? (
+          <form onSubmit={handleEmailLogin} style={{marginBottom:10}}>
+            <input 
+              type="email" 
+              placeholder="Email address" 
+              value={email} 
+              onChange={e=>setEmail(e.target.value)} 
+              style={{width:"100%",padding:12,marginBottom:8,borderRadius:10,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:13,outline:"none",boxSizing:"border-box"}}
+            />
+            <input 
+              type="password" 
+              placeholder="Password" 
+              value={password} 
+              onChange={e=>setPassword(e.target.value)} 
+              style={{width:"100%",padding:12,marginBottom:10,borderRadius:10,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:13,outline:"none",boxSizing:"border-box"}}
+            />
+            <button type="submit" disabled={loading} style={{width:"100%",padding:14,background:D.acc,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:"white",cursor:loading?"not-allowed":"pointer",marginBottom:8}}>
+              {loading ? "Signing In..." : "Sign In with Email"}
+            </button>
+            <button type="button" onClick={()=>setShowEmail(false)} style={{width:"100%",padding:8,background:"transparent",border:"none",color:D.ts,fontSize:11,cursor:"pointer"}}>
+              Back to Quick Demo Sign-In
+            </button>
+          </form>
+        ) : (
+          <>
+            <button onClick={()=>{ setDemoUser("ankit"); onPortal(); }} style={{width:"100%",padding:16,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:"pointer",marginBottom:10,boxShadow:`0 0 28px ${D.accG}`}}>Sign In To Portal (Demo)</button>
+            <button onClick={onOnboard} style={{width:"100%",padding:14,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:14,fontSize:14,fontWeight:600,color:D.acc,cursor:"pointer",marginBottom:10}}>New Client — Start Onboarding</button>
+            <button onClick={()=>{ setDemoUser("coach"); onCoach(); }} style={{width:"100%",padding:12,background:"transparent",border:`1px solid ${D.brd}`,borderRadius:12,fontSize:13,fontWeight:600,color:D.ts,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7,marginBottom:6}}><Ic.Coach c={D.tm} sz={15}/> Coach Login — Ram Dixit</button>
+            <button onClick={()=>setShowEmail(true)} style={{width:"100%",padding:6,background:"transparent",border:"none",fontSize:11,color:D.tm,cursor:"pointer",textAlign:"center"}}>Account Login (Email / Password)</button>
+          </>
+        )}
       </div>
     </div>
   </div>;
@@ -1455,14 +1637,59 @@ export default function App() {
   const toggle=()=>setTheme(t=>t==="dark"?"light":"dark");
   const headerLabel={checkin:`Morning, ${CLI.name}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
   const [showNotifs,setShowNotifs]=useState(false);
+
+  const loadData = useCallback(async () => {
+    try {
+      const res = await fetchClientData();
+      if (res.checkins && res.checkins.length > 0) {
+        setData(res.checkins);
+      }
+      if (res.plans) {
+        setPlans({
+          nutrition: res.plans.nutrition,
+          workout: res.plans.workout
+        });
+      }
+      if (res.client) {
+        if (res.client.weightUnit) setWeightUnit(res.client.weightUnit);
+        if (res.client.measUnit) setMeasUnit(res.client.measUnit);
+      }
+    } catch (err) {
+      console.warn("Client data sync:", err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loadData();
+      }
+    });
+    return () => unsubscribe();
+  }, [loadData]);
+
+  const handlePortalEnter = () => {
+    setStage("portal");
+    loadData();
+  };
+
   const notifs=[
     ...(plans.nutrition?[{t:"Nutrition plan is ready",s:"Ram just pushed your new meal plan — check My Profile.",i:Ic.SaladBowl,c:D.g}]:[]),
     ...(plans.workout?[{t:"Training plan is ready",s:"Ram just pushed your new workout programme — check My Profile.",i:Ic.Dumbbell,c:D.pur}]:[]),
     {t:"Measurement day tomorrow",s:"Have your weekly photos and measurements ready.",i:Ic.History,c:D.am},
   ];
 
-  if(stage==="login") return <LoginScreen D={D} onPortal={()=>setStage("portal")} onOnboard={()=>setStage("onboarding")} onCoach={()=>setStage("coach")}/>;
-  if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={(f)=>{setMeasUnit(f.measUnit||"cm");setOnboardingData(f);setStage("portal");}}/>;
+  if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onOnboard={()=>setStage("onboarding")} onCoach={()=>setStage("coach")}/>;
+  if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={async (f)=>{
+    setMeasUnit(f.measUnit||"cm");
+    setOnboardingData(f);
+    try {
+      await submitOnboarding(f);
+    } catch (err) {
+      console.warn("Onboarding API sync:", err.message);
+    }
+    setStage("portal");
+  }}/>;
   if(stage==="coach") return <CoachDashboard D={D} onBack={()=>setStage("portal")} plans={plans} setPlans={setPlans}/>;
 
   return (

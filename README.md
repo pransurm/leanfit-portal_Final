@@ -1,94 +1,158 @@
-# LeanFit Portal
+# LeanFit Portal — Cloud Native Platform
 
 Client check-in portal and coach command centre for LeanFit coaching.
 
-React 18 + Vite frontend, served from Google App Engine Standard (Python 3.11, F1 — free-tier eligible).
+- **Frontend**: React 18 + Vite SPA, served via Google App Engine Standard (`service: default`, F1 instance).
+- **Backend API**: Python 3.11 + FastAPI + Firebase Admin SDK, served via Google App Engine Standard (`service: api`, F1 instance).
+- **Routing**: Single-domain zero-CORS architecture managed by App Engine `dispatch.yaml`.
+- **Database**: Cloud Firestore (Native mode, `asia-south1` Mumbai).
+- **Authentication**: Firebase Authentication with custom claims (`role: coach` / `role: client`).
+- **Object Storage**: Cloud Storage private buckets with V4 Signed URLs (15-min TTL) for progress photos and blood report PDFs.
 
 ---
 
-## Local development
+## Architecture Overview
+
+```
+                        https://your-appspot-domain.com
+                                      │
+                               ┌──────┴──────┐
+                               │dispatch.yaml│
+                               └──────┬──────┘
+                                      │
+               ┌──────────────────────┴──────────────────────┐
+               │                                             │
+      URL path: /*                                  URL path: /api/*
+               ▼                                             ▼
+       service: default                               service: api
+    (Flask SPA File Server)                        (FastAPI REST Backend)
+               │                                             │
+      Serves dist/ React 18                          ┌───────┴───────┐
+                                                     │               │
+                                                     ▼               ▼
+                                            Cloud Firestore   Cloud Storage
+                                             (Native Mode)    (Signed URLs)
+```
+
+---
+
+## Data Standards & Business Rules
+
+1. **Date Format**: Standardized to `DD-MM-YYYY` (e.g. `08-09-2026`) across all countries.
+2. **Traffic Light Classification**:
+   - 🟢 **Green**: Consistently updating check-ins, steady progress, adherence $\ge 75\%$, active streak.
+   - 🟡 **Yellow**: Fewer check-ins, progress not up to mark ($1-2$ days missed, adherence $45\%-74\%$).
+   - 🔴 **Red**: Rarely or not checking in ($\ge 3$ days inactive, adherence $< 45\%$, streak $= 0$).
+   - ⏸️ **Paused**: Program on hold with expected return date.
+3. **Adherence Formula (Weighted + Proportional)**:
+   - Meals: 40% (proportional to 5 meals)
+   - Steps: 30% (proportional to daily step goal)
+   - Hydration: 20% (proportional to 3.0 Litres)
+   - Vitamins: 10% (multivitamin adherence)
+4. **Security & Data Isolation**:
+   - Client isolation enforced by Firestore security rules.
+   - Coach notes (`coachNote`) are strictly redacted from any client API responses.
+   - Photos and blood reports are private; accessed only through short-lived V4 signed URLs.
+
+---
+
+## Local Development
+
+### 1. Backend (FastAPI)
+
+```bash
+cd api
+pip install -r requirements.txt
+uvicorn api.main:app --port 8080 --reload
+```
+
+Health check: `http://localhost:8080/api/health`
+
+### 2. Frontend (Vite)
+
+In root directory:
 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
 ```
+*Note: Vite dev server automatically proxies `/api/*` to `http://127.0.0.1:8080`.*
 
-## Production build
+### 3. Seed Database (Optional)
+
+To seed initial mock data for Ankit, Ninad, Srikanth, Gaurav, and Coach Ram:
 
 ```bash
-npm run build        # outputs to dist/
-npm run preview      # serve the built output locally to sanity-check
+python api/seed.py
 ```
 
-## Run exactly as App Engine will
+### 4. Run Automated Calculations Test
 
 ```bash
-pip install -r requirements.txt
-npm run build
-python main.py       # http://localhost:8080
+python -m unittest api/test_calculations.py
 ```
 
 ---
 
-## Deploy to Google App Engine
+## Deployment to Google Cloud
 
-**The build must run before every deploy.** `dist/` is gitignored and is what
-actually gets uploaded — `.gcloudignore` excludes `src/`, `node_modules/`, and
-the build tooling, so only `dist/`, `main.py`, `requirements.txt`, and
-`app.yaml` are sent.
+### Prerequisites
 
-First time only:
-
+1. Set up Google Cloud CLI and select project:
 ```bash
 gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
-gcloud app create --region=asia-south1      # Mumbai
+```
+2. Enable App Engine in `asia-south1` (Mumbai):
+```bash
+gcloud app create --region=asia-south1
 ```
 
-Every deploy:
+### Deploy Firestore Security Rules & Indexes
 
 ```bash
-npm run build
-gcloud app deploy app.yaml
+firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-Then:
+### Deploy Services & Routing
 
+```bash
+# 1. Build frontend production bundle
+npm run build
+
+# 2. Deploy default service (Frontend)
+gcloud app deploy app.yaml
+
+# 3. Deploy api service (FastAPI Backend)
+gcloud app deploy api/app.yaml
+
+# 4. Deploy dispatch routing rules
+gcloud app deploy dispatch.yaml
+```
+
+After deployment:
 ```bash
 gcloud app browse
-gcloud app logs tail -s default             # live logs
+gcloud app logs tail -s api        # Stream backend API logs
+gcloud app logs tail -s default    # Stream frontend logs
 ```
 
-### Cost
-
-- `instance_class: F1` with `min_instances: 0` — scales to zero when idle.
-- Within App Engine's always-free quota (28 instance-hours/day) this runs at
-  $0/month for a small client base.
-- `max_instances: 2` is a deliberate cost ceiling. Raise it only if you
-  actually need the concurrency.
-
 ---
 
-## How routing works
+## Environment Configuration
 
-| Request | Served by |
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Description |
 |---|---|
-| `/assets/*` | App Engine static handler, cached 1 year (filenames are content-hashed) |
-| `/*.png`, `/*.ico`, etc. | App Engine static handler, cached 7 days |
-| everything else | Flask (`main.py`) returns `index.html`, uncached |
-
-The catch-all is what makes client-side routes work — a deep link like
-`/coach/clients/ankit` returns the SPA shell instead of a 404.
-
-`/healthz` returns `{"status": "ok"}` for uptime checks.
-
----
-
-## Before going live
-
-- [ ] Replace `CALENDLY_LINK` in `src/LeanFitPortal.jsx` with the real booking URL
-- [ ] Replace `REFERRAL_URL` with the real referral landing page
-- [ ] Swap in the final logo
-- [ ] Point the frontend at a real backend — all data is currently in-memory
-      mock data (`SEED`, `COACH_CLIENTS`) and resets on refresh
-- [ ] Add authentication before any real client data goes in
+| `GCP_PROJECT` | Google Cloud Project ID |
+| `GCS_BUCKET` | Cloud Storage bucket for photos and reports |
+| `SIGNED_URL_EXPIRATION_MINUTES` | TTL for signed URLs (default: 15) |
+| `VITE_FIREBASE_API_KEY` | Firebase Web SDK API Key |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase Auth Domain |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase Project ID |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Firebase Storage Bucket |
