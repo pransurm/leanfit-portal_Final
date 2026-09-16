@@ -1,0 +1,12 @@
+service: api
+runtime: python311
+instance_class: F1
+
+automatic_scaling:
+  min_instances: 0
+  max_instances: 2
+  target_cpu_utilization: 0.75
+
+env_variables:
+  GCP_PROJECT: "leanfit-portal"
+  GCS_BUCKET: "leanfit-portal.appspot.com"

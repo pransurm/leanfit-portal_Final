@@ -1,0 +1,635 @@
+import uuid
+from datetime import datetime, date
+from typing import Optional, List, Dict, Any
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query, Body, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from api.config import settings
+from api.database import get_db
+from api.auth import get_current_user, require_coach, AuthenticatedUser
+from api.calculations import (
+    parse_date_dmy,
+    format_date_dmy,
+    calc_adherence,
+    calc_streak,
+    classify_traffic_light,
+    get_client_alerts,
+    calc_body_fat
+)
+from api.storage import generate_signed_upload_url, generate_signed_read_url
+
+app = FastAPI(
+    title="LeanFit Portal API",
+    version="1.0.0",
+    description="Google Cloud Native Backend for LeanFit Portal"
+)
+
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+api_router = APIRouter(prefix="/api")
+
+# ═══ SCHEMAS ═══════════════════════════════════════════════════════════
+class CheckInPayload(BaseModel):
+    date: Optional[str] = None          # Display date, e.g. "8/9"
+    fullDate: str                       # Standardized "DD-MM-YYYY" (e.g. "08-09-2026")
+    w: float                            # Body weight
+    steps: int
+    wrk: int                            # Workout sessions completed this week
+    meals: int                          # Nutrition adherence 1-5
+    mealNote: Optional[str] = ""
+    water: float                        # Litres of water
+    multi: bool                         # Multivitamin adherence
+    e: int                              # Energy 1-10
+    sl: int                             # Sleep hours 1-10
+    st: int                             # Stress level 1-10
+    bed: Optional[str] = ""
+    wake: Optional[str] = ""
+    note: Optional[str] = ""
+
+class MeasurementPayload(BaseModel):
+    week: int
+    date: Optional[str] = None          # Standardized DD-MM-YYYY or "8 Sep"
+    arms: Optional[float] = None
+    waist: Optional[float] = None
+    quads: Optional[float] = None
+    chest: Optional[float] = None
+    shoulders: Optional[float] = None
+    hips: Optional[float] = None
+    neck: Optional[float] = None
+    photoFrontGcsPath: Optional[str] = None
+    photoSideGcsPath: Optional[str] = None
+    photoBackGcsPath: Optional[str] = None
+
+class WinPayload(BaseModel):
+    week: int
+    date: Optional[str] = None
+    emoji: str = "💪"
+    text: str
+
+class ReportConfirmPayload(BaseModel):
+    name: str
+    gcsPath: str
+    sizeBytes: int = 0
+    sizeDisp: Optional[str] = None
+    date: Optional[str] = None
+
+class PlanUpdatePayload(BaseModel):
+    nutriPlan: Optional[str] = None
+    workPlan: Optional[str] = None
+
+class StatusUpdatePayload(BaseModel):
+    status: str                         # "active" or "paused"
+    pauseReason: Optional[str] = None
+    resumeDate: Optional[str] = None
+
+class NoteUpdatePayload(BaseModel):
+    coachNote: str
+
+class ClientCreatePayload(BaseModel):
+    name: str
+    email: str
+    initials: Optional[str] = None
+    phase: str = "Phase I"
+    week: int = 1
+    startDate: str
+    endDate: Optional[str] = None
+    startW: float
+    targetW: Optional[float] = None
+    height: float = 175.0
+    city: str = "Mumbai"
+    prog: str = "LeanFit 6-Month Transformation"
+    coachStepsGoal: int = 8000
+
+
+# ═══ HEALTH ENDPOINTS ══════════════════════════════════════════════════
+@app.get("/healthz")
+@app.get("/health")
+@api_router.get("/health")
+def health_check():
+    return {"status": "ok", "service": "api", "project": settings.PROJECT_ID}
+
+
+# ═══ AUTH / USER IDENTITY ═════════════════════════════════════════════
+@api_router.get("/me")
+def get_me(user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_data = {}
+    if user.client_id:
+        doc = db.collection("clients").document(user.client_id).get()
+        if doc.exists:
+            client_data = doc.to_dict()
+            if not user.is_coach and "coachNote" in client_data:
+                del client_data["coachNote"]
+
+    return {
+        "uid": user.uid,
+        "email": user.email,
+        "role": user.role,
+        "clientId": user.client_id,
+        "client": client_data
+    }
+
+
+# ═══ CLIENT DATA & CHECK-INS ═════════════════════════════════════════
+@api_router.get("/client/data")
+def get_client_data(user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_id = user.client_id
+    client_ref = db.collection("clients").document(client_id)
+    client_doc = client_ref.get()
+
+    if not client_doc.exists:
+        # Return sensible defaults if document not yet initialized
+        return {
+            "client": {"id": client_id, "name": "Client", "phase": "Phase I", "week": 1, "coachStepsGoal": 8000},
+            "checkins": [],
+            "measurements": [],
+            "wins": [],
+            "reports": [],
+            "onboarding": None,
+            "adherence": {"meals": 0, "steps": 0, "water": 0, "vitamins": 0, "overall": 0},
+            "streak": 0,
+            "trafficLight": "am",
+            "plans": {"nutrition": None, "workout": None}
+        }
+
+    client = client_doc.to_dict()
+    client["id"] = client_id
+
+    # CRITICAL SECURITY RULE: Strip private coach note from client response
+    if not user.is_coach and "coachNote" in client:
+        del client["coachNote"]
+
+    steps_goal = client.get("coachStepsGoal", 8000)
+
+    # Fetch daily check-ins
+    checkins_query = client_ref.collection("checkins").stream()
+    checkins = [c.to_dict() for c in checkins_query]
+    # Sort chronologically by fullDate
+    def parse_sort_key(c):
+        d = parse_date_dmy(c.get("fullDate", ""))
+        return d if d else date.min
+
+    checkins.sort(key=parse_sort_key)
+
+    # Fetch measurements & attach signed download URLs for photos
+    measurements_query = client_ref.collection("measurements").stream()
+    measurements = []
+    for m in measurements_query:
+        m_data = m.to_dict()
+        m_data["id"] = m.id
+        if m_data.get("photoFrontGcsPath"):
+            m_data["photoFrontUrl"] = generate_signed_read_url(m_data["photoFrontGcsPath"])
+        if m_data.get("photoSideGcsPath"):
+            m_data["photoSideUrl"] = generate_signed_read_url(m_data["photoSideGcsPath"])
+        if m_data.get("photoBackGcsPath"):
+            m_data["photoBackUrl"] = generate_signed_read_url(m_data["photoBackGcsPath"])
+        measurements.append(m_data)
+    measurements.sort(key=lambda x: x.get("week", 0))
+
+    # Fetch wins
+    wins_query = client_ref.collection("wins").stream()
+    wins = [w.to_dict() for w in wins_query]
+    wins.sort(key=lambda x: x.get("week", 0))
+
+    # Fetch blood reports & attach signed download URLs
+    reports_query = client_ref.collection("reports").stream()
+    reports = []
+    for r in reports_query:
+        r_data = r.to_dict()
+        r_data["id"] = r.id
+        if r_data.get("gcsPath"):
+            r_data["downloadUrl"] = generate_signed_read_url(r_data["gcsPath"])
+        reports.append(r_data)
+
+    # Fetch onboarding intake if available
+    onboarding_doc = client_ref.collection("onboarding").document("intake").get()
+    onboarding = onboarding_doc.to_dict() if onboarding_doc.exists else None
+
+    # Calculate adherence & streak dynamically or use cached
+    adh = calc_adherence(checkins, steps_goal)
+    dates_list = [parse_date_dmy(c.get("fullDate", "")) for c in checkins if parse_date_dmy(c.get("fullDate", ""))]
+    streak, days_since, checked_in = calc_streak(dates_list)
+
+    tl = classify_traffic_light({
+        "status": client.get("status", "active"),
+        "daysSince": days_since,
+        "streak": streak,
+        "adherence": adh
+    })
+
+    return {
+        "client": client,
+        "checkins": checkins,
+        "measurements": measurements,
+        "wins": wins,
+        "reports": reports,
+        "onboarding": onboarding,
+        "adherence": adh,
+        "streak": streak,
+        "daysSince": days_since,
+        "checkedIn": checked_in,
+        "trafficLight": tl,
+        "plans": {
+            "nutrition": client.get("nutriPlan"),
+            "workout": client.get("workPlan"),
+            "updatedAt": client.get("plansUpdatedAt")
+        }
+    }
+
+
+@api_router.post("/client/checkin")
+def post_checkin(payload: CheckInPayload, user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_id = user.client_id
+    client_ref = db.collection("clients").document(client_id)
+
+    # Ensure fullDate is standardized DD-MM-YYYY
+    parsed_date = parse_date_dmy(payload.fullDate)
+    if not parsed_date:
+        raise HTTPException(status_code=400, detail="Invalid date format. Expected DD-MM-YYYY.")
+
+    doc_id = format_date_dmy(parsed_date)
+    display_date = payload.date or f"{parsed_date.day}/{parsed_date.month}"
+
+    checkin_data = {
+        "date": display_date,
+        "fullDate": doc_id,
+        "w": float(payload.w),
+        "steps": int(payload.steps),
+        "wrk": int(payload.wrk),
+        "meals": int(payload.meals),
+        "mealNote": payload.mealNote or "",
+        "water": float(payload.water),
+        "multi": bool(payload.multi),
+        "e": int(payload.e),
+        "sl": int(payload.sl),
+        "st": int(payload.st),
+        "bed": payload.bed or "",
+        "wake": payload.wake or "",
+        "note": payload.note or "",
+        "createdAt": datetime.utcnow().isoformat()
+    }
+
+    # Save idempotent daily checkin
+    client_ref.collection("checkins").document(doc_id).set(checkin_data, merge=True)
+
+    # Fetch all checkins to update cached parent metrics
+    all_checkins_query = client_ref.collection("checkins").stream()
+    all_checkins = [c.to_dict() for c in all_checkins_query]
+
+    client_doc = client_ref.get()
+    steps_goal = client_doc.to_dict().get("coachStepsGoal", 8000) if client_doc.exists else 8000
+
+    adh = calc_adherence(all_checkins, steps_goal)
+    dates_list = [parse_date_dmy(c.get("fullDate", "")) for c in all_checkins if parse_date_dmy(c.get("fullDate", ""))]
+    streak, days_since, checked_in = calc_streak(dates_list)
+
+    tl = classify_traffic_light({
+        "status": client_doc.to_dict().get("status", "active") if client_doc.exists else "active",
+        "daysSince": days_since,
+        "streak": streak,
+        "adherence": adh
+    })
+
+    # Update parent client profile with derived cached fields
+    client_ref.set({
+        "latestW": checkin_data["w"],
+        "latestMeals": checkin_data["meals"],
+        "latestSteps": checkin_data["steps"],
+        "latestWater": checkin_data["water"],
+        "latestStress": checkin_data["st"],
+        "latestEnergy": checkin_data["e"],
+        "daysSince": days_since,
+        "checkedIn": checked_in,
+        "streak": streak,
+        "adherence": adh,
+        "trafficLight": tl,
+        "updatedAt": datetime.utcnow().isoformat()
+    }, merge=True)
+
+    return {
+        "status": "ok",
+        "checkin": checkin_data,
+        "adherence": adh,
+        "streak": streak,
+        "daysSince": days_since,
+        "trafficLight": tl
+    }
+
+
+@api_router.post("/client/measurement")
+def post_measurement(payload: MeasurementPayload, user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_id = user.client_id
+    client_ref = db.collection("clients").document(client_id)
+
+    client_doc = client_ref.get()
+    height_cm = client_doc.to_dict().get("height", 175.0) if client_doc.exists else 175.0
+
+    # Auto calculate US Military body fat
+    bf_pct = calc_body_fat(
+        waist_cm=payload.waist,
+        neck_cm=payload.neck,
+        height_cm=height_cm,
+        hips_cm=payload.hips
+    )
+
+    meas_data = {
+        "week": payload.week,
+        "date": payload.date or datetime.utcnow().strftime("%d %b %Y"),
+        "arms": payload.arms,
+        "waist": payload.waist,
+        "quads": payload.quads,
+        "chest": payload.chest,
+        "shoulders": payload.shoulders,
+        "hips": payload.hips,
+        "neck": payload.neck,
+        "bodyFatPct": bf_pct,
+        "photoFrontGcsPath": payload.photoFrontGcsPath,
+        "photoSideGcsPath": payload.photoSideGcsPath,
+        "photoBackGcsPath": payload.photoBackGcsPath,
+        "createdAt": datetime.utcnow().isoformat()
+    }
+
+    meas_id = f"week_{payload.week}"
+    client_ref.collection("measurements").document(meas_id).set(meas_data, merge=True)
+
+    return {"status": "ok", "measurement": meas_data}
+
+
+@api_router.post("/client/wins")
+def post_win(payload: WinPayload, user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_id = user.client_id
+    client_ref = db.collection("clients").document(client_id)
+
+    win_data = {
+        "week": payload.week,
+        "date": payload.date or datetime.utcnow().strftime("%d %b %Y"),
+        "emoji": payload.emoji,
+        "text": payload.text,
+        "createdAt": datetime.utcnow().isoformat()
+    }
+
+    win_id = f"win_{payload.week}_{int(datetime.utcnow().timestamp())}"
+    client_ref.collection("wins").document(win_id).set(win_data)
+    return {"status": "ok", "win": win_data}
+
+
+@api_router.post("/client/onboarding")
+def save_onboarding(payload: Dict[str, Any] = Body(...), user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_id = user.client_id
+    client_ref = db.collection("clients").document(client_id)
+
+    # Save intake answers
+    client_ref.collection("onboarding").document("intake").set(payload, merge=True)
+
+    # Update basic profile data from onboarding
+    updates = {}
+    if "name" in payload:
+        updates["name"] = payload["name"]
+    if "measUnit" in payload:
+        updates["measUnit"] = payload["measUnit"]
+    if "weightUnit" in payload:
+        updates["weightUnit"] = payload["weightUnit"]
+    if "height" in payload:
+        try:
+            updates["height"] = float(payload["height"])
+        except (ValueError, TypeError):
+            pass
+
+    if updates:
+        client_ref.set(updates, merge=True)
+
+    return {"status": "ok"}
+
+
+# ═══ FILE UPLOADS (SIGNED URLS) ═══════════════════════════════════════
+@api_router.post("/client/reports/upload-url")
+def get_report_upload_url(payload: Dict[str, str] = Body(...), user: AuthenticatedUser = Depends(get_current_user)):
+    filename = payload.get("fileName", "blood_report.pdf")
+    content_type = payload.get("contentType", "application/pdf")
+    unique_id = uuid.uuid4().hex[:8]
+    clean_name = "".join(c for c in filename if c.isalnum() or c in (".", "_", "-"))
+    gcs_path = f"clients/{user.client_id}/reports/{unique_id}_{clean_name}"
+
+    upload_url = generate_signed_upload_url(gcs_path, content_type)
+    return {"uploadUrl": upload_url, "gcsPath": gcs_path, "cleanName": clean_name}
+
+
+@api_router.post("/client/reports/confirm")
+def confirm_report_upload(payload: ReportConfirmPayload, user: AuthenticatedUser = Depends(get_current_user)):
+    db = get_db()
+    client_id = user.client_id
+    client_ref = db.collection("clients").document(client_id)
+
+    report_id = str(uuid.uuid4())
+    report_data = {
+        "name": payload.name,
+        "gcsPath": payload.gcsPath,
+        "sizeBytes": payload.sizeBytes,
+        "sizeDisp": payload.sizeDisp or f"{round(payload.sizeBytes / (1024 * 1024), 1)} MB",
+        "date": payload.date or datetime.utcnow().strftime("%d %b %Y"),
+        "uploadedAt": datetime.utcnow().isoformat()
+    }
+
+    client_ref.collection("reports").document(report_id).set(report_data)
+    report_data["id"] = report_id
+    report_data["downloadUrl"] = generate_signed_read_url(payload.gcsPath)
+
+    return {"status": "ok", "report": report_data}
+
+
+@api_router.post("/client/photos/upload-url")
+def get_photo_upload_url(payload: Dict[str, Any] = Body(...), user: AuthenticatedUser = Depends(get_current_user)):
+    filename = payload.get("fileName", "photo.jpg")
+    slot = payload.get("slot", "front") # front, side, back
+    week = payload.get("week", 1)
+    content_type = payload.get("contentType", "image/jpeg")
+
+    unique_id = uuid.uuid4().hex[:8]
+    clean_name = "".join(c for c in filename if c.isalnum() or c in (".", "_", "-"))
+    gcs_path = f"clients/{user.client_id}/photos/week{week}_{slot}_{unique_id}_{clean_name}"
+
+    upload_url = generate_signed_upload_url(gcs_path, content_type)
+    return {"uploadUrl": upload_url, "gcsPath": gcs_path}
+
+
+# ═══ COACH ENDPOINTS (ROLE ENFORCED) ═════════════════════════════════
+@api_router.get("/coach/roster")
+def get_coach_roster(user: AuthenticatedUser = Depends(require_coach)):
+    db = get_db()
+    clients_stream = db.collection("clients").stream()
+    roster = []
+
+    for doc in clients_stream:
+        c = doc.to_dict()
+        c["id"] = doc.id
+        # Calculate live alerts for coach
+        c["alerts"] = get_client_alerts(c, c.get("coachStepsGoal", 8000))
+        # Ensure traffic light is computed
+        c["trafficLight"] = classify_traffic_light(c)
+        roster.append(c)
+
+    # Sort: red first, then yellow, then green; active before paused
+    priority_order = {"r": 0, "am": 1, "g": 2}
+    roster.sort(key=lambda x: (
+        1 if x.get("status") == "paused" else 0,
+        priority_order.get(x.get("trafficLight", "am"), 1),
+        -x.get("daysSince", 0)
+    ))
+
+    return {"clients": roster}
+
+
+@api_router.get("/coach/client/{client_id}")
+def get_coach_client_deep_dive(client_id: str, user: AuthenticatedUser = Depends(require_coach)):
+    db = get_db()
+    client_ref = db.collection("clients").document(client_id)
+    client_doc = client_ref.get()
+
+    if not client_doc.exists:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    client = client_doc.to_dict()
+    client["id"] = client_id
+
+    # Coach HAS full access to coachNote
+    checkins_query = client_ref.collection("checkins").stream()
+    checkins = [c.to_dict() for c in checkins_query]
+    checkins.sort(key=lambda c: parse_date_dmy(c.get("fullDate", "")) or date.min)
+
+    measurements_query = client_ref.collection("measurements").stream()
+    measurements = []
+    for m in measurements_query:
+        m_data = m.to_dict()
+        m_data["id"] = m.id
+        if m_data.get("photoFrontGcsPath"):
+            m_data["photoFrontUrl"] = generate_signed_read_url(m_data["photoFrontGcsPath"])
+        if m_data.get("photoSideGcsPath"):
+            m_data["photoSideUrl"] = generate_signed_read_url(m_data["photoSideGcsPath"])
+        if m_data.get("photoBackGcsPath"):
+            m_data["photoBackUrl"] = generate_signed_read_url(m_data["photoBackGcsPath"])
+        measurements.append(m_data)
+
+    reports_query = client_ref.collection("reports").stream()
+    reports = []
+    for r in reports_query:
+        r_data = r.to_dict()
+        r_data["id"] = r.id
+        if r_data.get("gcsPath"):
+            r_data["downloadUrl"] = generate_signed_read_url(r_data["gcsPath"])
+        reports.append(r_data)
+
+    wins_query = client_ref.collection("wins").stream()
+    wins = [w.to_dict() for w in wins_query]
+
+    onboarding_doc = client_ref.collection("onboarding").document("intake").get()
+    onboarding = onboarding_doc.to_dict() if onboarding_doc.exists else None
+
+    return {
+        "client": client,
+        "checkins": checkins,
+        "measurements": measurements,
+        "wins": wins,
+        "reports": reports,
+        "onboarding": onboarding,
+        "alerts": get_client_alerts(client, client.get("coachStepsGoal", 8000))
+    }
+
+
+@api_router.put("/coach/client/{client_id}/plans")
+def update_client_plans(client_id: str, payload: PlanUpdatePayload, user: AuthenticatedUser = Depends(require_coach)):
+    db = get_db()
+    client_ref = db.collection("clients").document(client_id)
+
+    updates = {
+        "plansUpdatedAt": datetime.utcnow().isoformat()
+    }
+    if payload.nutriPlan is not None:
+        updates["nutriPlan"] = payload.nutriPlan
+    if payload.workPlan is not None:
+        updates["workPlan"] = payload.workPlan
+
+    client_ref.set(updates, merge=True)
+    return {"status": "ok", "updatedAt": updates["plansUpdatedAt"]}
+
+
+@api_router.put("/coach/client/{client_id}/status")
+def update_client_status(client_id: str, payload: StatusUpdatePayload, user: AuthenticatedUser = Depends(require_coach)):
+    db = get_db()
+    client_ref = db.collection("clients").document(client_id)
+
+    updates = {
+        "status": payload.status,
+        "pauseReason": payload.pauseReason if payload.status == "paused" else None,
+        "resumeDate": payload.resumeDate if payload.status == "paused" else None,
+        "updatedAt": datetime.utcnow().isoformat()
+    }
+    client_ref.set(updates, merge=True)
+    return {"status": "ok", "status": payload.status}
+
+
+@api_router.put("/coach/client/{client_id}/notes")
+def update_coach_notes(client_id: str, payload: NoteUpdatePayload, user: AuthenticatedUser = Depends(require_coach)):
+    db = get_db()
+    client_ref = db.collection("clients").document(client_id)
+    client_ref.set({"coachNote": payload.coachNote, "updatedAt": datetime.utcnow().isoformat()}, merge=True)
+    return {"status": "ok"}
+
+
+@api_router.post("/coach/client")
+def create_client_roster_entry(payload: ClientCreatePayload, user: AuthenticatedUser = Depends(require_coach)):
+    db = get_db()
+    client_id = payload.name.lower().replace(" ", "_")
+    client_ref = db.collection("clients").document(client_id)
+
+    data = {
+        "name": payload.name,
+        "initials": payload.initials or "".join(w[0].upper() for w in payload.name.split()[:2]),
+        "email": payload.email,
+        "phase": payload.phase,
+        "week": payload.week,
+        "startDate": payload.startDate,
+        "endDate": payload.endDate or "",
+        "startW": payload.startW,
+        "targetW": payload.targetW or payload.startW,
+        "latestW": payload.startW,
+        "height": payload.height,
+        "city": payload.city,
+        "prog": payload.prog,
+        "coachStepsGoal": payload.coachStepsGoal,
+        "status": "active",
+        "adherence": {"meals": 100, "steps": 100, "water": 100, "vitamins": 100, "overall": 100},
+        "streak": 1,
+        "daysSince": 0,
+        "checkedIn": False,
+        "trafficLight": "g",
+        "createdAt": datetime.utcnow().isoformat()
+    }
+    client_ref.set(data, merge=True)
+    return {"status": "ok", "clientId": client_id}
+
+
+# ═══ MOCK STORAGE ENDPOINTS (OFFLINE / LOCAL DEV FALLBACK) ═════════════
+@api_router.put("/mock-storage/upload")
+def mock_upload():
+    return {"status": "uploaded"}
+
+@api_router.get("/mock-storage/download")
+def mock_download():
+    return {"status": "ok", "mock": True}
+
+# Mount router
+app.include_router(api_router)
