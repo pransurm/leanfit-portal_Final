@@ -142,3 +142,10 @@ export async function updateCoachNotes(clientId, coachNote) {
     body: JSON.stringify({ coachNote })
   });
 }
+
+export async function deleteCoachClientCheckin(clientId, checkinId, reason) {
+  return request(`/coach/client/${clientId}/checkin/${checkinId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason })
+  });
+}

@@ -75,6 +75,9 @@ class WinPayload(BaseModel):
     emoji: str = "💪"
     text: str
 
+class CheckinDeletePayload(BaseModel):
+    reason: str
+
 class ReportConfirmPayload(BaseModel):
     name: str
     gcsPath: str
@@ -171,9 +174,15 @@ def get_client_data(user: AuthenticatedUser = Depends(get_current_user)):
 
     steps_goal = client.get("coachStepsGoal", 8000)
 
-    # Fetch daily check-ins
+    # Fetch daily check-ins (excluding soft-deleted)
     checkins_query = client_ref.collection("checkins").stream()
-    checkins = [c.to_dict() for c in checkins_query]
+    checkins = []
+    for c in checkins_query:
+        c_dict = c.to_dict()
+        if not c_dict.get("deleted", False):
+            c_dict["id"] = c.id
+            checkins.append(c_dict)
+
     # Sort chronologically by fullDate
     def parse_sort_key(c):
         d = parse_date_dmy(c.get("fullDate", ""))
@@ -505,9 +514,14 @@ def get_coach_client_deep_dive(client_id: str, user: AuthenticatedUser = Depends
     client = client_doc.to_dict()
     client["id"] = client_id
 
-    # Coach HAS full access to coachNote
+    # Coach HAS full access to coachNote (excluding soft-deleted checkins)
     checkins_query = client_ref.collection("checkins").stream()
-    checkins = [c.to_dict() for c in checkins_query]
+    checkins = []
+    for c in checkins_query:
+        c_dict = c.to_dict()
+        if not c_dict.get("deleted", False):
+            c_dict["id"] = c.id
+            checkins.append(c_dict)
     checkins.sort(key=lambda c: parse_date_dmy(c.get("fullDate", "")) or date.min)
 
     measurements_query = client_ref.collection("measurements").stream()
@@ -587,6 +601,132 @@ def update_coach_notes(client_id: str, payload: NoteUpdatePayload, user: Authent
     client_ref = db.collection("clients").document(client_id)
     client_ref.set({"coachNote": payload.coachNote, "updatedAt": datetime.now(timezone.utc).isoformat()}, merge=True)
     return {"status": "ok"}
+
+
+@api_router.delete("/coach/client/{client_id}/checkin/{checkin_id}")
+def delete_client_checkin(
+    client_id: str,
+    checkin_id: str,
+    payload: CheckinDeletePayload,
+    user: AuthenticatedUser = Depends(require_coach)
+):
+    reason = payload.reason.strip() if payload.reason else ""
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deletion reason is required"
+        )
+
+    db = get_db()
+    client_ref = db.collection("clients").document(client_id)
+    client_doc = client_ref.get()
+    if not client_doc.exists:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    checkin_ref = client_ref.collection("checkins").document(checkin_id)
+    checkin_doc = checkin_ref.get()
+    if not checkin_doc.exists:
+        raise HTTPException(status_code=404, detail="Check-in document not found")
+
+    checkin_data = checkin_doc.to_dict()
+    if checkin_data.get("deleted", False):
+        raise HTTPException(status_code=400, detail="Check-in is already deleted")
+
+    # 1. Soft-delete check-in document
+    deletion_timestamp = datetime.now(timezone.utc).isoformat()
+    checkin_ref.set({
+        "deleted": True,
+        "deletedAt": deletion_timestamp,
+        "deletedBy": user.email or user.uid,
+        "deletedByUid": user.uid,
+        "deletionReason": reason
+    }, merge=True)
+
+    # 2. Write immutable audit log entry
+    audit_id = f"audit_{uuid.uuid4().hex[:12]}"
+    audit_entry = {
+        "id": audit_id,
+        "action": "CHECKIN_SOFT_DELETED",
+        "clientId": client_id,
+        "checkinId": checkin_id,
+        "deletedBy": user.email or user.uid,
+        "deletedByUid": user.uid,
+        "reason": reason,
+        "timestamp": deletion_timestamp,
+        "photoRetentionPolicy": "Retained in Cloud Storage for recovery; URLs suppressed from portal views.",
+        "originalCheckin": checkin_data
+    }
+    client_ref.collection("audit_logs").document(audit_id).set(audit_entry)
+
+    # 3. Recalculate parent client metrics from remaining active check-ins
+    all_checkins_query = client_ref.collection("checkins").stream()
+    active_checkins = [
+        c.to_dict() for c in all_checkins_query 
+        if not c.to_dict().get("deleted", False)
+    ]
+    def parse_sort_key(c):
+        d = parse_date_dmy(c.get("fullDate", ""))
+        return d if d else date.min
+
+    active_checkins.sort(key=parse_sort_key)
+
+    client_dict = client_doc.to_dict()
+    steps_goal = client_dict.get("coachStepsGoal", 8000)
+    baseline_w = client_dict.get("startW", 68.0)
+
+    adh = calc_adherence(active_checkins, steps_goal)
+    dates_list = [parse_date_dmy(c.get("fullDate", "")) for c in active_checkins if parse_date_dmy(c.get("fullDate", ""))]
+    streak, days_since, checked_in = calc_streak(dates_list)
+
+    if active_checkins:
+        newest = active_checkins[-1]
+        latest_w = newest.get("w", baseline_w)
+        latest_meals = newest.get("meals", 5)
+        latest_steps = newest.get("steps", steps_goal)
+        latest_water = newest.get("water", 3.0)
+        latest_stress = newest.get("st", 1)
+        latest_energy = newest.get("e", 5)
+    else:
+        latest_w = baseline_w
+        latest_meals = 0
+        latest_steps = 0
+        latest_water = 0.0
+        latest_stress = 1
+        latest_energy = 5
+
+    tl = classify_traffic_light({
+        "status": client_dict.get("status", "active"),
+        "daysSince": days_since,
+        "streak": streak,
+        "adherence": adh
+    })
+
+    client_ref.set({
+        "latestW": latest_w,
+        "latestMeals": latest_meals,
+        "latestSteps": latest_steps,
+        "latestWater": latest_water,
+        "latestStress": latest_stress,
+        "latestEnergy": latest_energy,
+        "daysSince": days_since,
+        "checkedIn": checked_in,
+        "streak": streak,
+        "adherence": adh,
+        "trafficLight": tl,
+        "updatedAt": deletion_timestamp
+    }, merge=True)
+
+    return {
+        "status": "ok",
+        "deletedCheckinId": checkin_id,
+        "deletionReason": reason,
+        "remainingActiveCheckins": len(active_checkins),
+        "adherence": adh,
+        "streak": streak,
+        "daysSince": days_since,
+        "trafficLight": tl,
+        "latestW": latest_w
+    }
 
 
 @api_router.post("/coach/client")

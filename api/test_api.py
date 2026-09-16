@@ -1,8 +1,10 @@
 import pytest
+from datetime import date, timedelta
 from starlette.testclient import TestClient
 from api.main import app
 from api.auth import AuthenticatedUser, get_current_user, require_coach
 from api.config import settings
+from api.calculations import format_date_dmy
 
 # ═══ MOCK FIRESTORE IN-MEMORY STORE ═════════════════════════════════════
 class MockDocSnapshot:
@@ -266,3 +268,131 @@ def test_invalid_date_format_rejected(client_with_mock_db):
     res = client.post("/api/client/checkin", json=bad_payload)
     assert res.status_code == 400
     assert "Invalid date format" in res.json()["detail"]
+
+
+# ═══ 5. CHECK-IN SOFT DELETION & AUDIT LOGS ══════════════════════════════
+def test_client_cannot_delete_checkin(client_with_mock_db):
+    """Clients attempting to call DELETE /api/coach/client/{id}/checkin/{id} are rejected with 403."""
+    client, mock_db = client_with_mock_db
+    mock_db.store["clients/ankit/checkins/08-09-2026"] = {"fullDate": "08-09-2026", "w": 67.5}
+
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+    )
+
+    res = client.request("DELETE", "/api/coach/client/ankit/checkin/08-09-2026", json={"reason": "Wrong weight"})
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Coach access required"
+
+def test_coach_delete_requires_reason(client_with_mock_db):
+    """Coach cannot delete a checkin without providing a non-empty reason string."""
+    client, mock_db = client_with_mock_db
+    mock_db.store["clients/ankit/checkins/08-09-2026"] = {"fullDate": "08-09-2026", "w": 67.5}
+
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
+    )
+
+    # Empty reason
+    res = client.request("DELETE", "/api/coach/client/ankit/checkin/08-09-2026", json={"reason": "   "})
+    assert res.status_code == 400
+    assert "Deletion reason is required" in res.json()["detail"]
+
+def test_coach_successful_soft_delete_and_audit_log(client_with_mock_db):
+    """Coach soft deletes check-in: marks document deleted, logs to audit_logs, recalculates parent fields, and excludes from client data."""
+    client, mock_db = client_with_mock_db
+
+    # Setup Ankit with 2 checkins: 01-09-2026 (68.0 kg) and 02-09-2026 (incorrect 85.0 kg)
+    mock_db.store["clients/ankit/checkins/01-09-2026"] = {
+        "fullDate": "01-09-2026", "w": 68.0, "meals": 5, "steps": 8000, "water": 3.0, "e": 8, "sl": 7, "st": 3
+    }
+    mock_db.store["clients/ankit/checkins/02-09-2026"] = {
+        "fullDate": "02-09-2026", "w": 85.0, "meals": 5, "steps": 8000, "water": 3.0, "e": 8, "sl": 7, "st": 3
+    }
+    mock_db.store["clients/ankit"]["latestW"] = 85.0
+
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
+    )
+
+    delete_reason = "Client scale malfunction recorded 85kg instead of 67.8kg"
+    res = client.request(
+        "DELETE",
+        "/api/coach/client/ankit/checkin/02-09-2026",
+        json={"reason": delete_reason}
+    )
+    assert res.status_code == 200
+    res_data = res.json()
+    assert res_data["status"] == "ok"
+    assert res_data["deletedCheckinId"] == "02-09-2026"
+    assert res_data["deletionReason"] == delete_reason
+    assert res_data["remainingActiveCheckins"] == 1
+    assert res_data["latestW"] == 68.0
+
+    # 1. Verify checkin is marked deleted in store, NOT purged (soft delete)
+    checkin_in_db = mock_db.store["clients/ankit/checkins/02-09-2026"]
+    assert checkin_in_db["deleted"] is True
+    assert checkin_in_db["deletedBy"] == "ram@leanfit.io"
+    assert checkin_in_db["deletionReason"] == delete_reason
+    assert "deletedAt" in checkin_in_db
+
+    # 2. Verify audit log was created under clients/ankit/audit_logs/
+    audit_logs = [v for k, v in mock_db.store.items() if k.startswith("clients/ankit/audit_logs/")]
+    assert len(audit_logs) == 1
+    log = audit_logs[0]
+    assert log["action"] == "CHECKIN_SOFT_DELETED"
+    assert log["checkinId"] == "02-09-2026"
+    assert log["deletedBy"] == "ram@leanfit.io"
+    assert log["reason"] == delete_reason
+    assert "photoRetentionPolicy" in log
+
+    # 3. Verify parent client document latestW recomputed to remaining active checkin (68.0 kg)
+    assert mock_db.store["clients/ankit"]["latestW"] == 68.0
+
+    # 4. Verify client calling GET /api/client/data does NOT see deleted checkin
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+    )
+    client_res = client.get("/api/client/data")
+    assert client_res.status_code == 200
+    returned_checkins = client_res.json()["checkins"]
+    assert len(returned_checkins) == 1
+    assert returned_checkins[0]["fullDate"] == "01-09-2026"
+
+def test_mid_sequence_deletion_breaks_streak(client_with_mock_db):
+    """When a mid-sequence check-in is deleted, streak must break rather than counting remaining docs."""
+    client, mock_db = client_with_mock_db
+
+    t0 = date.today()
+    t1 = t0 - timedelta(days=1)
+    t2 = t0 - timedelta(days=2)
+
+    d0 = format_date_dmy(t0)
+    d1 = format_date_dmy(t1)
+    d2 = format_date_dmy(t2)
+
+    # 3 consecutive days: t2, t1, t0
+    for d in [d0, d1, d2]:
+        mock_db.store[f"clients/ankit/checkins/{d}"] = {
+            "fullDate": d, "w": 68.0, "meals": 5, "steps": 8000, "water": 3.0, "e": 8, "sl": 7, "st": 3
+        }
+
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
+    )
+
+    # Delete the middle check-in d1 (yesterday)
+    res = client.request(
+        "DELETE",
+        f"/api/coach/client/ankit/checkin/{d1}",
+        json={"reason": "Incorrect data entered for yesterday"}
+    )
+    assert res.status_code == 200
+    res_data = res.json()
+
+    # Remaining active docs: d0 (today) and d2 (2 days ago). Total remaining = 2.
+    assert res_data["remainingActiveCheckins"] == 2
+    # Because d1 is deleted, the streak from today encounters a gap at yesterday, so streak MUST be 1, NOT 2!
+    assert res_data["streak"] == 1
+    assert mock_db.store["clients/ankit"]["streak"] == 1
+

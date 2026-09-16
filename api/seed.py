@@ -19,9 +19,21 @@ def seed_database():
         "email": "ram@leanfit.io",
         "role": "coach",
         "name": "Ram Dixit",
-        "createdAt": datetime.utcnow().isoformat()
+        "createdAt": datetime.now(timezone.utc).isoformat()
     }, merge=True)
     print("  ✓ Created coach user: Ram Dixit (ram@leanfit.io)")
+
+    # Attempt to set Firebase Custom Claims if Firebase Auth user exists
+    try:
+        from firebase_admin import auth as firebase_auth
+        try:
+            u = firebase_auth.get_user_by_email("ram@leanfit.io")
+            firebase_auth.set_custom_user_claims(u.uid, {"role": "coach"})
+            print("  ✓ Set Firebase custom user claims {'role': 'coach'} for ram@leanfit.io")
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     # 2. Client: Ankit
     ankit_ref = db.collection("clients").document("ankit")

@@ -22,8 +22,6 @@ service cloud.firestore {
 
     // Clients collection & subcollections
     match /clients/{clientId} {
-      // Coach has full read/write. Client can read their own doc (coachNote stripped via API layer).
-      // Client updates cannot touch coach-managed fields.
       allow read: if isCoach() || isClientOwner(clientId);
       allow update: if isCoach() || (
         isClientOwner(clientId) && 
@@ -34,8 +32,16 @@ service cloud.firestore {
       allow create, delete: if isCoach();
 
       match /checkins/{checkinId} {
-        allow read: if isCoach() || isClientOwner(clientId);
-        allow write: if isCoach() || isClientOwner(clientId);
+        allow read: if isCoach() || (isClientOwner(clientId) && !resource.data.deleted);
+        allow create: if isCoach() || isClientOwner(clientId);
+        allow update: if isCoach() || (
+          isClientOwner(clientId) && 
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'deleted', 'deletedAt', 'deletedBy', 'deletionReason'
+          ])
+        );
+        // Clients can NEVER delete check-ins. Only coach role is permitted.
+        allow delete: if isCoach();
       }
 
       match /measurements/{measId} {
@@ -56,6 +62,11 @@ service cloud.firestore {
       match /onboarding/{docId} {
         allow read: if isCoach() || isClientOwner(clientId);
         allow write: if isCoach() || isClientOwner(clientId);
+      }
+
+      match /audit_logs/{auditId} {
+        allow read: if isCoach();
+        allow write: if isCoach();
       }
     }
   }

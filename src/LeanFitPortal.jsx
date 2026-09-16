@@ -10,9 +10,11 @@ import {
   confirmReportUpload, 
   uploadFileToSignedUrl, 
   fetchCoachRoster, 
+  fetchCoachClientDeepDive,
   updateCoachPlans, 
   updateCoachStatus, 
   updateCoachNotes,
+  deleteCoachClientCheckin,
   setDemoUser
 } from "./services/api";
 import { auth, loginWithEmail, logoutUser } from "./firebase";
@@ -721,6 +723,71 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
     const tl=trafficLight(c);
     const clientId = c.id ? String(c.id).toLowerCase() : c.name.toLowerCase().replace(" ", "_");
 
+    const [checkins, setCheckins] = useState([]);
+    const [loadingCheckins, setLoadingCheckins] = useState(true);
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleteReason, setDeleteReason] = useState("");
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState("");
+    const [actionMsg, setActionMsg] = useState("");
+
+    useEffect(() => {
+      let isMounted = true;
+      async function loadDeepDive() {
+        setLoadingCheckins(true);
+        try {
+          const res = await fetchCoachClientDeepDive(clientId);
+          if (isMounted && res) {
+            if (res.checkins) {
+              setCheckins([...res.checkins].reverse());
+            }
+            if (res.client?.coachNote !== undefined) {
+              setCoachNote(res.client.coachNote);
+            }
+          }
+        } catch (err) {
+          console.warn("Could not fetch deep dive data:", err.message);
+          if (isMounted) {
+            setCheckins([...SEED].reverse().map(s => ({
+              id: s.fullDate || s.date,
+              ...s,
+              fullDate: s.fullDate || (s.date.includes("-") ? s.date : `${s.date.padStart(5, "0")}-2026`)
+            })));
+          }
+        } finally {
+          if (isMounted) setLoadingCheckins(false);
+        }
+      }
+      loadDeepDive();
+      return () => { isMounted = false; };
+    }, [clientId]);
+
+    const handleConfirmDelete = async () => {
+      if (!deleteTarget || !deleteReason.trim()) return;
+      setIsDeleting(true);
+      setDeleteError("");
+      try {
+        const res = await deleteCoachClientCheckin(clientId, deleteTarget.id, deleteReason.trim());
+        setCheckins(prev => prev.filter(chk => chk.id !== deleteTarget.id));
+        setClients(cs => cs.map((cl, i) => i === sel ? {
+          ...cl,
+          latestW: res.latestW ?? cl.latestW,
+          adherence: res.adherence ?? cl.adherence,
+          streak: res.streak ?? cl.streak,
+          trafficLight: res.trafficLight ?? cl.trafficLight,
+          daysSince: res.daysSince ?? cl.daysSince,
+        } : cl));
+        setActionMsg(`Check-in for ${deleteTarget.fullDate || deleteTarget.date} soft-deleted. Metrics recalculated.`);
+        setTimeout(() => setActionMsg(""), 4000);
+        setDeleteTarget(null);
+        setDeleteReason("");
+      } catch (err) {
+        setDeleteError(err.message || "Failed to delete check-in");
+      } finally {
+        setIsDeleting(false);
+      }
+    };
+
     const applyPause=async ()=>{
       try {
         await updateCoachStatus(clientId, { status: "paused", pauseReason, resumeDate });
@@ -820,6 +887,55 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
             </ResponsiveContainer>
           </GCard>
 
+          {/* Check-In History & Log Management with Soft Deletion */}
+          <GCard D={D} style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <SL D={D}>Check-In History & Log Management</SL>
+              <div style={{fontSize:11,color:D.ts,fontWeight:600}}>{checkins.length} active entries</div>
+            </div>
+            {actionMsg && (
+              <div style={{background:`${D.g}18`,color:D.g,border:`1px solid ${D.g}30`,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:10}}>
+                ✓ {actionMsg}
+              </div>
+            )}
+            {loadingCheckins ? (
+              <div style={{padding:"14px 0",textAlign:"center",color:D.tm,fontSize:12}}>Loading check-ins...</div>
+            ) : checkins.length === 0 ? (
+              <div style={{padding:"14px 0",textAlign:"center",color:D.tm,fontSize:12}}>No active check-ins found.</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:300,overflowY:"auto",paddingRight:4}}>
+                {checkins.map((chk) => (
+                  <div key={chk.id || chk.fullDate || chk.date} style={{background:D.c2,borderRadius:10,padding:"10px 12px",border:`1px solid ${D.brd}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                        <span style={{fontSize:13,fontWeight:700,color:D.t}}>{chk.fullDate || chk.date}</span>
+                        <span style={{fontSize:11,fontWeight:700,color:D.g,background:D.gG,padding:"2px 6px",borderRadius:4}}>{chk.w} kg</span>
+                        <span style={{fontSize:11,color:D.ts}}>{chk.steps?.toLocaleString?.() || chk.steps} steps</span>
+                      </div>
+                      <div style={{fontSize:11,color:D.ts,display:"flex",gap:10}}>
+                        <span>Meals: <strong style={{color:chk.meals>=4?D.g:D.am}}>{chk.meals}/5</strong></span>
+                        <span>Water: <strong style={{color:chk.water>=2.5?D.g:D.am}}>{chk.water}L</strong></span>
+                        <span>Energy: <strong style={{color:D.t}}>{chk.e}/10</strong></span>
+                      </div>
+                      {chk.note && (
+                        <div style={{fontSize:10,color:D.tm,fontStyle:"italic",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                          "{chk.note}"
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => { setDeleteTarget(chk); setDeleteReason(""); setDeleteError(""); }}
+                      title="Soft delete check-in with reason"
+                      style={{background:`${D.r}15`,border:`1px solid ${D.r}40`,color:D.r,borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,transition:"all 0.15s ease"}}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </GCard>
+
           {/* Programme Management */}
           <GCard D={D} style={{marginBottom:12}}>
             <SL D={D}>Programme Management</SL>
@@ -890,6 +1006,77 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
             }} style={{marginTop:10,width:"100%",padding:10,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:10,color:D.acc,fontWeight:700,fontSize:13,cursor:"pointer"}}>Save Notes</button>
           </GCard>
         </div>
+
+        {/* Soft-Delete Confirmation Modal (Coach-only) */}
+        {deleteTarget && (
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.72)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{maxWidth:450,width:"100%",background:D.c1,border:`1.5px solid ${D.r}60`,borderRadius:16,padding:22,boxShadow:"0 20px 40px rgba(0,0,0,0.6)",fontFamily:"-apple-system,system-ui,sans-serif"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <div style={{width:38,height:38,borderRadius:"50%",background:`${D.r}20`,display:"flex",alignItems:"center",justifyContent:"center",border:`1px solid ${D.r}40`,flexShrink:0}}>
+                  <Ic.Alert c={D.r} sz={18}/>
+                </div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800,color:D.t}}>Delete Client Check-In</div>
+                  <div style={{fontSize:11,color:D.ts}}>Client: <strong style={{color:D.t}}>{c.name}</strong> · Date: <strong style={{color:D.r}}>{deleteTarget.fullDate || deleteTarget.date}</strong> ({deleteTarget.w} kg)</div>
+                </div>
+              </div>
+
+              <div style={{background:`${D.r}12`,border:`1px solid ${D.r}30`,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:11,lineHeight:1.5,color:D.ts}}>
+                <strong style={{color:D.r}}>Soft Deletion & Recalculation Notice:</strong><br/>
+                This check-in will be soft-deleted and omitted from adherence, streak, and weight calculations. Any progress photos are safely preserved in Cloud Storage. An immutable audit log entry will be saved with your reason.
+              </div>
+
+              {deleteError && (
+                <div style={{background:`${D.r}20`,border:`1px solid ${D.r}`,borderRadius:8,padding:"8px 12px",color:D.r,fontSize:12,fontWeight:600,marginBottom:12}}>
+                  {deleteError}
+                </div>
+              )}
+
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:D.t,marginBottom:6}}>
+                  Reason for Deletion <span style={{color:D.r}}>* (Required)</span>
+                </div>
+                <Ta
+                  D={D}
+                  value={deleteReason}
+                  onChange={setDeleteReason}
+                  placeholder="e.g., Client accidentally entered wrong scale reading / duplicate check-in..."
+                  rows={3}
+                />
+              </div>
+
+              <div style={{display:"flex",gap:10}}>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => { if (!isDeleting) setDeleteTarget(null); }}
+                  style={{flex:1,padding:"10px 14px",borderRadius:10,border:`1px solid ${D.brd}`,background:"transparent",color:D.ts,fontWeight:600,fontSize:13,cursor:isDeleting?"not-allowed":"pointer"}}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!deleteReason.trim() || isDeleting}
+                  onClick={handleConfirmDelete}
+                  style={{
+                    flex:2,
+                    padding:"10px 14px",
+                    borderRadius:10,
+                    border:"none",
+                    background:deleteReason.trim()&&!isDeleting?D.r:D.brd,
+                    color:"white",
+                    fontWeight:700,
+                    fontSize:13,
+                    cursor:deleteReason.trim()&&!isDeleting?"pointer":"not-allowed",
+                    opacity:deleteReason.trim()&&!isDeleting?1:0.6
+                  }}
+                >
+                  {isDeleting ? "Deleting..." : "Confirm Soft Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
 }
