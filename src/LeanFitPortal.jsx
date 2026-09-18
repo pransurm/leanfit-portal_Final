@@ -699,7 +699,10 @@ function CoachDashboard({D, onBack, plans, setPlans}) {
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif"}}>
       <div style={{padding:"14px 18px",background:D.c1,borderBottom:`1px solid ${D.brd}`,flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div><LFLogo D={D} compact/><div style={{fontSize:9,color:D.acc,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginTop:4}}>Command Centre</div></div>
-        <button onClick={onBack} style={{fontSize:11,color:D.ts,background:"none",border:"none",cursor:"pointer"}}>← Client View</button>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={onBack} style={{fontSize:11,color:D.ts,background:"none",border:"none",cursor:"pointer"}}>← Client View</button>
+          <button onClick={async ()=>{ await logoutUser(); window.location.reload(); }} style={{fontSize:11,color:D.r,background:`${D.r}15`,border:`1px solid ${D.r}35`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontWeight:600}}>Sign Out</button>
+        </div>
       </div>
       <CommandCentreBody D={D} clients={clients} sorted={sorted} setSel={setSel} active={active} checkedIn={checkedIn} needsAttn={needsAttn} tlCounts={tlCounts} tlFilter={tlFilter} setTlFilter={setTlFilter} alertColor={alertColor}/>
     </div>
@@ -1302,7 +1305,7 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
       <div style={{fontSize:12,color:D.ts,lineHeight:1.7,marginBottom:18}}>Know someone who needs this? Share your link — they can join, or book a free call with Ram first.</div>
       <button onClick={shareLink} style={{width:"100%",padding:13,background:D.gG,border:`1.5px solid ${D.g}`,borderRadius:12,color:D.g,fontWeight:700,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><Ic.Share c={D.g} sz={16}/>{copied?"Message Copied ✓":"Share My Link"}</button>
     </GCard>
-    <button style={{width:"100%",padding:14,background:"transparent",border:`1px solid ${D.brd}`,borderRadius:12,fontSize:13,fontWeight:600,color:D.ts,cursor:"pointer"}}>Sign Out</button>
+    <button onClick={async ()=>{ await logoutUser(); window.location.reload(); }} style={{width:"100%",padding:14,background:"transparent",border:`1px solid ${D.brd}`,borderRadius:12,fontSize:13,fontWeight:600,color:D.ts,cursor:"pointer",marginTop:6}}>Sign Out</button>
   </div>;
 }
 
@@ -1739,8 +1742,7 @@ function OnboardingScreen({D,onComplete}) {
   </div>;
 }
 
-function LoginScreen({D,onPortal,onOnboard,onCoach}) {
-  const [showEmail, setShowEmail] = useState(false);
+function LoginScreen({D,onPortal,onCoach}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -1751,12 +1753,25 @@ function LoginScreen({D,onPortal,onOnboard,onCoach}) {
     if (!email || !password) return;
     setLoading(true);
     setAuthError("");
-    const { user, error } = await loginWithEmail(email, password);
+    const { user, token, error } = await loginWithEmail(email, password);
     setLoading(false);
     if (error) {
       setAuthError(error);
     } else {
-      onPortal();
+      let isCoach = false;
+      try {
+        if (token) {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          isCoach = payload.role === "coach";
+        }
+      } catch {
+        isCoach = (email.toLowerCase().trim() === "ram@leanfit.io");
+      }
+      if (isCoach || email.toLowerCase().trim() === "ram@leanfit.io") {
+        onCoach();
+      } else {
+        onPortal();
+      }
     }
   };
 
@@ -1766,45 +1781,39 @@ function LoginScreen({D,onPortal,onOnboard,onCoach}) {
       <div><div style={{marginBottom:24}}><LFLogo D={D}/></div>
         <div style={{fontSize:48,fontWeight:900,color:D.t,lineHeight:0.95,letterSpacing:"-2.5px",marginBottom:14}}>YOUR<br/>PORTAL.</div>
         <div style={{fontSize:13,color:D.ts,lineHeight:1.7,marginBottom:30}}>Daily check-ins. Every metric.<br/>Fully visualised. Built for high performers.</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{["Check-In","Progress","Wins","Body Fat","Inch Loss","Weekly Measurements","Coach View"].map(t=><span key={t} style={{background:D.accG,border:`1px solid ${D.brd}`,borderRadius:20,padding:"5px 12px",fontSize:11,color:D.ts}}>{t}</span>)}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{["Check-In","Progress","Wins","Body Fat","Inch Loss","Weekly Measurements"].map(t=><span key={t} style={{background:D.accG,border:`1px solid ${D.brd}`,borderRadius:20,padding:"5px 12px",fontSize:11,color:D.ts}}>{t}</span>)}</div>
       </div>
       <div>
         {authError && (
-          <div style={{padding:"8px 12px",borderRadius:10,background:D.rG,border:`1px solid ${D.r}40`,color:D.r,fontSize:11,marginBottom:10}}>
+          <div style={{padding:"10px 14px",borderRadius:10,background:D.rG,border:`1px solid ${D.r}40`,color:D.r,fontSize:12,fontWeight:600,marginBottom:12}}>
             {authError}
           </div>
         )}
-        {showEmail ? (
-          <form onSubmit={handleEmailLogin} style={{marginBottom:10}}>
+        <form onSubmit={handleEmailLogin}>
+          <div style={{marginBottom:10}}>
             <input 
               type="email" 
               placeholder="Email address" 
               value={email} 
+              autoComplete="username"
               onChange={e=>setEmail(e.target.value)} 
-              style={{width:"100%",padding:12,marginBottom:8,borderRadius:10,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:13,outline:"none",boxSizing:"border-box"}}
+              style={{width:"100%",padding:14,borderRadius:12,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:14,outline:"none",boxSizing:"border-box"}}
             />
+          </div>
+          <div style={{marginBottom:14}}>
             <input 
               type="password" 
               placeholder="Password" 
               value={password} 
+              autoComplete="current-password"
               onChange={e=>setPassword(e.target.value)} 
-              style={{width:"100%",padding:12,marginBottom:10,borderRadius:10,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:13,outline:"none",boxSizing:"border-box"}}
+              style={{width:"100%",padding:14,borderRadius:12,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:14,outline:"none",boxSizing:"border-box"}}
             />
-            <button type="submit" disabled={loading} style={{width:"100%",padding:14,background:D.acc,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:"white",cursor:loading?"not-allowed":"pointer",marginBottom:8}}>
-              {loading ? "Signing In..." : "Sign In with Email"}
-            </button>
-            <button type="button" onClick={()=>setShowEmail(false)} style={{width:"100%",padding:8,background:"transparent",border:"none",color:D.ts,fontSize:11,cursor:"pointer"}}>
-              Back to Quick Demo Sign-In
-            </button>
-          </form>
-        ) : (
-          <>
-            <button onClick={()=>{ setDemoUser("ankit"); onPortal(); }} style={{width:"100%",padding:16,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:"pointer",marginBottom:10,boxShadow:`0 0 28px ${D.accG}`}}>Sign In To Portal (Demo)</button>
-            <button onClick={onOnboard} style={{width:"100%",padding:14,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:14,fontSize:14,fontWeight:600,color:D.acc,cursor:"pointer",marginBottom:10}}>New Client — Start Onboarding</button>
-            <button onClick={()=>{ setDemoUser("coach"); onCoach(); }} style={{width:"100%",padding:12,background:"transparent",border:`1px solid ${D.brd}`,borderRadius:12,fontSize:13,fontWeight:600,color:D.ts,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7,marginBottom:6}}><Ic.Coach c={D.tm} sz={15}/> Coach Login — Ram Dixit</button>
-            <button onClick={()=>setShowEmail(true)} style={{width:"100%",padding:6,background:"transparent",border:"none",fontSize:11,color:D.tm,cursor:"pointer",textAlign:"center"}}>Account Login (Email / Password)</button>
-          </>
-        )}
+          </div>
+          <button type="submit" disabled={loading || !email || !password} style={{width:"100%",padding:16,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:loading||!email||!password?"not-allowed":"pointer",opacity:loading||!email||!password?0.7:1,boxShadow:`0 0 24px ${D.accG}`}}>
+            {loading ? "Signing In..." : "Sign In to Portal"}
+          </button>
+        </form>
       </div>
     </div>
   </div>;
@@ -1824,6 +1833,14 @@ export default function App() {
   const toggle=()=>setTheme(t=>t==="dark"?"light":"dark");
   const headerLabel={checkin:`Morning, ${CLI.name}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
   const [showNotifs,setShowNotifs]=useState(false);
+
+  useEffect(() => {
+    // Secret onboarding link: e.g. https://portal.leanfit.in/?onboard=true or #onboard
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("onboard") === "true" || params.get("join") === "true" || window.location.hash === "#onboard") {
+      setStage("onboarding");
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -1866,7 +1883,7 @@ export default function App() {
     {t:"Measurement day tomorrow",s:"Have your weekly photos and measurements ready.",i:Ic.History,c:D.am},
   ];
 
-  if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onOnboard={()=>setStage("onboarding")} onCoach={()=>setStage("coach")}/>;
+  if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onCoach={()=>setStage("coach")}/>;
   if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={async (f)=>{
     setMeasUnit(f.measUnit||"cm");
     setOnboardingData(f);

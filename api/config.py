@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
-    PROJECT_ID: str = os.getenv("GCP_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", "leanfit-portal"))
-    GCS_BUCKET: str = os.getenv("GCS_BUCKET", f"{PROJECT_ID}.appspot.com")
+    PROJECT_ID: str = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT") or "project-2875a590-5860-4bb6-a46"
+    GCS_BUCKET: str = os.getenv("GCS_BUCKET") or f"{PROJECT_ID}.appspot.com"
     FIRESTORE_DATABASE: str = os.getenv("FIRESTORE_DATABASE", "(default)")
     SIGNED_URL_EXPIRATION_MINUTES: int = int(os.getenv("SIGNED_URL_EXPIRATION_MINUTES", "15"))
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production")

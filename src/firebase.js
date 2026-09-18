@@ -10,9 +10,9 @@ import {
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyFakeKeyForLeanFitDemo123456789",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "leanfit-portal.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "leanfit-portal",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "leanfit-portal.appspot.com",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "project-2875a590-5860-4bb6-a46.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "project-2875a590-5860-4bb6-a46",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "project-2875a590-5860-4bb6-a46.appspot.com",
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "123456789012",
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:123456789012:web:abcdef1234567890"
 };

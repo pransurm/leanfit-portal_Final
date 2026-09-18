@@ -13,3 +13,7 @@ README.md
 *.log
 __pycache__/
 api/
+
+# Explicitly include the built frontend SPA
+!dist/
+!dist/**
