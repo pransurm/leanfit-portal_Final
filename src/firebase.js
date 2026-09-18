@@ -9,7 +9,7 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCqIaeclbQc12rYVwEJRhMKIoNq5yafhrC",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCqIaeclbQc12rYVwEJRhMKIoNq5yafhrc",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "project-2875a590-5860-4bb6-a46.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "project-2875a590-5860-4bb6-a46",
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "project-2875a590-5860-4bb6-a46.firebasestorage.app",
