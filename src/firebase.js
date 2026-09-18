@@ -9,12 +9,13 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyFakeKeyForLeanFitDemo123456789",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCqIaeclbQc12rYVwEJRhMKIoNq5yafhrC",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "project-2875a590-5860-4bb6-a46.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "project-2875a590-5860-4bb6-a46",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "project-2875a590-5860-4bb6-a46.appspot.com",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "123456789012",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:123456789012:web:abcdef1234567890"
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "project-2875a590-5860-4bb6-a46.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "531999071701",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:531999071701:web:6022d359a6cfbac644f15c",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-D4Z85X7TZK"
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
