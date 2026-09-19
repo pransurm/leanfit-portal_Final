@@ -9,10 +9,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from api.database import get_db
 
-def set_coach_role(identifier: str, revoke: bool = False):
+def set_coach_role(identifier: str, password: str = None, revoke: bool = False):
     """
     Sets custom user claims {'role': 'coach'} or revokes to {'role': 'client'}
     and updates Firestore users/{uid} document.
+    Optionally sets or updates the user password.
     identifier: either user email or Firebase Auth UID.
     """
     try:
@@ -34,8 +35,27 @@ def set_coach_role(identifier: str, revoke: bool = False):
     if user is None:
         try:
             user = firebase_auth.get_user(identifier)
+        except Exception:
+            pass
+
+    if user is None:
+        if "@" in identifier and password:
+            print(f"ℹ️ User '{identifier}' not found. Creating user in Firebase Auth...")
+            try:
+                user = firebase_auth.create_user(email=identifier, password=password)
+                print(f"✅ Created user '{identifier}' with UID: {user.uid}")
+            except Exception as e:
+                print(f"❌ Failed to create user: {e}")
+                sys.exit(1)
+        else:
+            print(f"❌ User '{identifier}' not found in Firebase Auth: {identifier}")
+            sys.exit(1)
+    elif password:
+        try:
+            firebase_auth.update_user(user.uid, password=password)
+            print(f"✅ Updated password for user '{user.email or user.uid}' successfully!")
         except Exception as e:
-            print(f"❌ User '{identifier}' not found in Firebase Auth: {e}")
+            print(f"❌ Failed to update password: {e}")
             sys.exit(1)
 
     target_role = "client" if revoke else "coach"
@@ -62,13 +82,13 @@ def set_coach_role(identifier: str, revoke: bool = False):
     except Exception as e:
         print(f"⚠️ Notice: Could not update Firestore users doc: {e}")
 
-    print("\n👉 IMPORTANT: The user's current session token will carry this new claim")
-    print("   as soon as the frontend calls getIdToken(true) to force a token refresh.")
+    print("\n👉 Credentials and Coach role are ready!")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Promote or demote a LeanFit user to Coach role.")
+    parser = argparse.ArgumentParser(description="Promote or demote a LeanFit user to Coach role and set password.")
     parser.add_argument("identifier", help="User email or Firebase UID (e.g. ram@leanfit.io)")
+    parser.add_argument("--password", help="Set or reset the user's password (e.g. --password CoachRam@2026)", default=None)
     parser.add_argument("--revoke", action="store_true", help="Revoke coach role and set to client")
     args = parser.parse_args()
 
-    set_coach_role(args.identifier, revoke=args.revoke)
+    set_coach_role(args.identifier, password=args.password, revoke=args.revoke)

@@ -19,6 +19,7 @@ import {
 } from "./services/api";
 import { auth, loginWithEmail, logoutUser } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { LOGO_HIGHRES } from "./logo_base64";
 
 /* ═══ THEMES ═══════════════════════════════════════════════ */
 const THEMES = {
@@ -127,6 +128,7 @@ const Ic = {
   Moon: ({c,sz=16}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>,
   Camera: ({c,sz=18}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>,
   Lock: ({c,sz=14}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>,
+  Mail: ({c,sz=16}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
   Chevron: ({c,sz=14,dir="right"}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round" style={{transform:dir==="left"?"rotate(180deg)":dir==="down"?"rotate(90deg)":"none"}}><polyline points="9 18 15 12 9 6"/></svg>,
   Coach: ({c,sz=22}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
   History: ({c,sz=22}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>,
@@ -196,18 +198,78 @@ function RingGauge({D, pct=0, size=150, stroke=16, color, trackColor, label, sub
   );
 }
 
-const LOGO_IMG = "data:image/jpeg;base64,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";
+const LOGO_IMG = LOGO_HIGHRES;
+
+/* ═══ PROPER DATE FORMATTER (Change #5) ═══════════════════════ */
+function formatDisplayDate(dateStr) {
+  if (!dateStr) return "";
+  const clean = String(dateStr).trim();
+  if (/^\d{1,2}(st|nd|rd|th)?\s+[A-Za-z]+(\s+\d{4})?$/.test(clean)) return clean;
+
+  const stripped = clean.replace(/^0+/, "");
+  let day, month, year;
+
+  if (stripped.includes("/") && stripped.includes("-")) {
+    const [dm, y] = stripped.split("-");
+    const [d, m] = dm.split("/");
+    day = parseInt(d, 10);
+    month = parseInt(m, 10);
+    year = parseInt(y, 10);
+  } else if (stripped.includes("-")) {
+    const parts = stripped.split("-");
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        year = parseInt(parts[0], 10);
+        month = parseInt(parts[1], 10);
+        day = parseInt(parts[2], 10);
+      } else {
+        day = parseInt(parts[0], 10);
+        month = parseInt(parts[1], 10);
+        year = parseInt(parts[2], 10);
+      }
+    }
+  } else if (stripped.includes("/")) {
+    const [d, m] = stripped.split("/");
+    day = parseInt(d, 10);
+    month = parseInt(m, 10);
+    year = 2026;
+  }
+
+  if (!day || !month || isNaN(day) || isNaN(month)) {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      day = d.getDate();
+      month = d.getMonth() + 1;
+      year = d.getFullYear();
+    } else {
+      return dateStr;
+    }
+  }
+
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+  const monthName = months[month - 1] || "";
+  const getOrdinal = (n) => {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+
+  return `${getOrdinal(day)} ${monthName} ${year || 2026}`;
+}
 
 /* ═══ LF LOGO ════════════════════════════════════════════════ */
 function LFLogo({D,compact=false}) {
   if (compact) return (
-    <div style={{background:"white",borderRadius:8,padding:"3px 7px",display:"inline-flex",alignItems:"center"}}>
-      <img src={LOGO_IMG} alt="LeanFit" style={{height:20,width:"auto",display:"block"}}/>
+    <div style={{background:"white",borderRadius:8,padding:"3px 8px",display:"inline-flex",alignItems:"center",boxShadow:"0 1px 4px rgba(0,0,0,0.15)"}}>
+      <img src={LOGO_IMG} alt="LeanFit" style={{height:18,width:"auto",display:"block"}}/>
     </div>
   );
   return (
-    <div style={{background:"white",borderRadius:10,padding:"6px 14px",display:"inline-flex",alignItems:"center"}}>
-      <img src={LOGO_IMG} alt="LeanFit Health & Lifestyle" style={{height:32,width:"auto",display:"block"}}/>
+    <div style={{background:"white",borderRadius:14,padding:"8px 18px",display:"inline-flex",alignItems:"center",boxShadow:"0 4px 20px rgba(0,0,0,0.3)",border:"1px solid rgba(255,255,255,0.2)"}}>
+      <img src={LOGO_IMG} alt="LeanFit Health & Lifestyle" style={{height:40,width:"auto",display:"block"}}/>
     </div>
   );
 }
@@ -522,7 +584,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
                   {photos[v]
                     ? <img src={photos[v]} alt={v} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                     : <><Ic.Camera c={D.tm} sz={20}/><div style={{fontSize:10,color:D.tm}}>{v}</div></>}
-                  <input type="file" accept="image/*" capture="environment" onChange={e=>handlePhoto(v,e.target.files[0])} style={{display:"none"}}/>
+                  <input type="file" accept="image/*" onChange={e=>handlePhoto(v,e.target.files[0])} style={{display:"none"}}/>
                   {photos[v] && <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.55)",color:"white",fontSize:9,textAlign:"center",padding:"3px 0"}}>{v}</div>}
                 </label>
               ))}
@@ -655,7 +717,7 @@ function Dashboard({D, data, weightUnit}) {
 }
 
 /* ═══ COACH DASHBOARD V6 — Command Centre + Client Deep Dive ═ */
-function CoachDashboard({D, onBack, plans, setPlans}) {
+function CoachDashboard({D, theme, toggleTheme, onBack, plans, setPlans}) {
   const [sel, setSel] = useState(null);
   const [clients, setClients] = useState(COACH_CLIENTS);
   const [tlFilter, setTlFilter] = useState("all");
@@ -692,14 +754,17 @@ function CoachDashboard({D, onBack, plans, setPlans}) {
   const alertColor=(lvl)=>({r:D.r,am:D.am,g:D.g}[lvl]||D.ts);
 
   /* ── Individual Client Deep Dive ── */
-  if (sel!==null) return <ClientDeepDive D={D} sel={sel} setSel={setSel} clients={clients} setClients={setClients} plans={plans} setPlans={setPlans}/>;
+  if (sel!==null) return <ClientDeepDive D={D} theme={theme} toggleTheme={toggleTheme} sel={sel} setSel={setSel} clients={clients} setClients={setClients} plans={plans} setPlans={setPlans}/>;
 
   /* ── Command Centre ── */
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif"}}>
       <div style={{padding:"14px 18px",background:D.c1,borderBottom:`1px solid ${D.brd}`,flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div><LFLogo D={D} compact/><div style={{fontSize:9,color:D.acc,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginTop:4}}>Command Centre</div></div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button onClick={toggleTheme} title="Toggle Light/Dark Theme" style={{width:32,height:32,borderRadius:"50%",background:D.c2,border:`1px solid ${D.brd}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:D.t}}>
+            {theme==="dark" ? <Ic.Sun c={D.t} sz={14}/> : <Ic.Moon c={D.t} sz={14}/>}
+          </button>
           <button onClick={onBack} style={{fontSize:11,color:D.ts,background:"none",border:"none",cursor:"pointer"}}>← Client View</button>
           <button onClick={async ()=>{ await logoutUser(); window.location.reload(); }} style={{fontSize:11,color:D.r,background:`${D.r}15`,border:`1px solid ${D.r}35`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontWeight:600}}>Sign Out</button>
         </div>
@@ -710,7 +775,7 @@ function CoachDashboard({D, onBack, plans, setPlans}) {
 }
 
 /* ═══ CLIENT DEEP DIVE (extracted — hooks must not live in a conditional) ═══ */
-function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) {
+function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients, plans, setPlans}) {
     const c=clients[sel];
     const [showPause,setShowPause]=useState(false);
     const [pauseReason,setPauseReason]=useState(c.pauseReason||"");
@@ -754,7 +819,7 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
             setCheckins([...SEED].reverse().map(s => ({
               id: s.fullDate || s.date,
               ...s,
-              fullDate: s.fullDate || (s.date.includes("-") ? s.date : `${s.date.padStart(5, "0")}-2026`)
+              fullDate: formatDisplayDate(s.fullDate || s.date)
             })));
           }
         } finally {
@@ -830,6 +895,9 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
           <button onClick={()=>setSel(null)} style={{background:"none",border:"none",color:D.acc,cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:600}}><Ic.Chevron c={D.acc} sz={14} dir="left"/> Command Centre</button>
           <div style={{width:34,height:34,borderRadius:"50%",background:D.accG,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:D.acc,flexShrink:0,border:`1.5px solid ${D.brd}`}}>{c.initials}</div>
           <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name}</div><div style={{fontSize:10,color:D.ts}}>{c.phase} · {c.prog} · {c.city}</div></div>
+          <button onClick={toggleTheme} title="Toggle Light/Dark Theme" style={{width:30,height:30,borderRadius:"50%",background:D.c2,border:`1px solid ${D.brd}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:D.t}}>
+            {theme==="dark" ? <Ic.Sun c={D.t} sz={13}/> : <Ic.Moon c={D.t} sz={13}/>}
+          </button>
           <div style={{display:"flex",alignItems:"center",gap:5,fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:`${alertColor(tl)}18`,color:alertColor(tl),border:`1px solid ${alertColor(tl)}30`}}>
             <div style={{width:7,height:7,borderRadius:"50%",background:alertColor(tl)}}/>{TL_LABEL[tl]}
           </div>
@@ -911,7 +979,7 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
                   <div key={chk.id || chk.fullDate || chk.date} style={{background:D.c2,borderRadius:10,padding:"10px 12px",border:`1px solid ${D.brd}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                        <span style={{fontSize:13,fontWeight:700,color:D.t}}>{chk.fullDate || chk.date}</span>
+                        <span style={{fontSize:13,fontWeight:700,color:D.t}}>{formatDisplayDate(chk.fullDate || chk.date)}</span>
                         <span style={{fontSize:11,fontWeight:700,color:D.g,background:D.gG,padding:"2px 6px",borderRadius:4}}>{chk.w} kg</span>
                         <span style={{fontSize:11,color:D.ts}}>{chk.steps?.toLocaleString?.() || chk.steps} steps</span>
                       </div>
@@ -1086,18 +1154,41 @@ function ClientDeepDive({D, sel, setSel, clients, setClients, plans, setPlans}) 
 
 /* ═══ COMMAND CENTRE BODY ═══════════════════════════════════════ */
 function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needsAttn, tlCounts, tlFilter, setTlFilter, alertColor}) {
+  const now = new Date();
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const todayCleanDate = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]}`;
+
   return (
       <div style={{flex:1,overflowY:"auto",padding:16}}>
-        <div style={{marginBottom:16}}><div style={{fontSize:21,fontWeight:900,color:D.t}}>Good Morning, Ram 👋</div><div style={{fontSize:12,color:D.ts}}>Mon, 14 Sep 2026 · Here's your client overview</div></div>
+        {/* Live Overview Header Card (Matching media_1789805534318.png) */}
+        <div style={{background:D.c1,border:`1px solid ${D.brd}`,borderRadius:18,padding:"16px 18px",marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:D.g,display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:D.g,display:"inline-block"}}/>
+            Live overview
+          </div>
+          <div style={{fontSize:22,fontWeight:900,color:D.t,letterSpacing:"-0.5px"}}>{todayCleanDate}</div>
+          <div style={{fontSize:12,color:D.ts,marginTop:3}}>{active} active clients · {checkedIn} check-ins today · {clients.filter(c=>c.status==="paused").length} paused</div>
+        </div>
 
-        {/* Overview cards */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
-          {[{v:active,l:"Active Clients",c:D.acc,g:D.accG},{v:`${checkedIn}/${active}`,l:"Checked In Today",c:D.g,g:D.gG},{v:clients.filter(c=>c.status==="paused").length,l:"Paused",c:D.am,g:D.amG},{v:needsAttn,l:"Need Attention",c:D.r,g:D.rG}].map((s,i)=>(
-            <GCard key={i} D={D} glowColor={`${s.c}18`} style={{textAlign:"center",padding:"14px 8px"}}>
-              <div style={{fontSize:24,fontWeight:900,color:s.c}}>{s.v}</div>
-              <div style={{fontSize:9,color:s.c,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",margin:"3px 0"}}>{s.l}</div>
-            </GCard>
-          ))}
+        {/* 4 Overview cards (Matching media_1789805534318.png) */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+          <div style={{background:D.c1,border:`1px solid ${D.brd}`,borderRadius:16,padding:16}}>
+            <div style={{fontSize:28,fontWeight:900,color:D.t}}>{active}</div>
+            <div style={{fontSize:11,color:D.ts,fontWeight:600,marginTop:2}}>Active clients</div>
+          </div>
+          <div style={{background:D.c1,border:`1px solid ${D.brd}`,borderRadius:16,padding:16}}>
+            <div style={{fontSize:28,fontWeight:900,color:D.g}}>{checkedIn}/{active}</div>
+            <div style={{fontSize:11,color:D.ts,fontWeight:600,marginTop:2}}>Checked in today</div>
+          </div>
+          <div style={{background:D.c1,border:`1px solid ${D.brd}`,borderLeft:`3.5px solid ${D.am}`,borderRadius:16,padding:16}}>
+            <div style={{fontSize:28,fontWeight:900,color:D.am}}>{clients.filter(c=>c.status==="paused").length}</div>
+            <div style={{fontSize:11,color:D.ts,fontWeight:600,marginTop:2}}>Paused</div>
+          </div>
+          <div style={{background:D.c1,border:`1px solid ${D.brd}`,borderLeft:`3.5px solid ${D.r}`,borderRadius:16,padding:16}}>
+            <div style={{fontSize:28,fontWeight:900,color:D.r}}>{needsAttn}</div>
+            <div style={{fontSize:11,color:D.ts,fontWeight:600,marginTop:2}}>Needs attention</div>
+          </div>
         </div>
 
         {/* Traffic light filter — draft classification, to refine together */}
@@ -1447,7 +1538,7 @@ function CheckInHistorySub({D,data}) {
         <thead><tr style={{background:D.c2}}>{cols.map(([k,l])=><th key={k} style={{padding:"9px 10px",textAlign:"left",color:D.ts,fontWeight:700,whiteSpace:"nowrap",borderBottom:`1px solid ${D.brd}`}}>{l}</th>)}</tr></thead>
         <tbody>{[...data].reverse().map((d,i)=>(
           <tr key={i} style={{borderBottom:`1px solid ${D.brd}`}}>
-            {cols.map(([k])=><td key={k} style={{padding:"9px 10px",color:D.t,whiteSpace:"nowrap"}}>{k==="water"?`${d[k]}L`:k==="meals"?`${d[k]}/5`:d[k]}</td>)}
+            {cols.map(([k])=><td key={k} style={{padding:"9px 10px",color:D.t,whiteSpace:"nowrap"}}>{k==="water"?`${d[k]}L`:k==="meals"?`${d[k]}/5`:k==="date"?formatDisplayDate(d.fullDate||d.date):d[k]}</td>)}
           </tr>
         ))}</tbody>
       </table>
@@ -1458,12 +1549,20 @@ function CheckInHistorySub({D,data}) {
 function BottomNav({D,tab,setTab}) {
   const left=[{id:"dashboard",Icon:Ic.Progress,l:"Progress"},{id:"body",Icon:Ic.Body,l:"Body"}];
   const right=[{id:"wins",Icon:Ic.Wins,l:"Wins"},{id:"me",Icon:Ic.Me,l:"Me"}];
-  const NavBtn=({id,Icon,l})=>{const a=tab===id;return <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"11px 0 9px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><Icon c={a?D.acc:D.tm} sz={20}/><span style={{fontSize:8.5,fontWeight:a?700:500,color:a?D.acc:D.tm,letterSpacing:0.3}}>{l}</span></button>;};
-  return <div style={{position:"relative",background:D.c1,borderTop:`1px solid ${D.brd}`,display:"flex",flexShrink:0}}>
+  const NavBtn=({id,Icon,l})=>{
+    const a=tab===id;
+    return (
+      <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"10px 0 8px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+        <Icon c={a?D.acc:D.ts} sz={24}/>
+        <span style={{fontSize:11,fontWeight:a?800:600,color:a?D.acc:D.ts,letterSpacing:0.3}}>{l}</span>
+      </button>
+    );
+  };
+  return <div style={{position:"relative",background:D.c1,borderTop:`1px solid ${D.brd}`,display:"flex",alignItems:"center",flexShrink:0,padding:"2px 0"}}>
     {left.map(t=>NavBtn(t))}
     <div style={{flex:1,display:"flex",justifyContent:"center",position:"relative"}}>
-      <button onClick={()=>setTab("checkin")} style={{position:"absolute",top:-24,width:54,height:54,borderRadius:"50%",background:tab==="checkin"?D.acc:D.g,border:`4px solid ${D.c1}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:`0 6px 16px ${D.gG}`}}>
-        <Ic.Plus c="#ffffff" sz={22}/>
+      <button onClick={()=>setTab("checkin")} style={{position:"absolute",top:-26,width:56,height:56,borderRadius:"50%",background:tab==="checkin"?D.acc:D.g,border:`4px solid ${D.c1}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:`0 6px 18px ${D.gG}`}}>
+        <Ic.Plus c="#ffffff" sz={26}/>
       </button>
     </div>
     {right.map(t=>NavBtn(t))}
@@ -1777,40 +1876,68 @@ function LoginScreen({D,onPortal,onCoach}) {
 
   return <div style={{minHeight:"100vh",background:D.bg,display:"flex",flexDirection:"column",fontFamily:"-apple-system,system-ui,sans-serif",position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",top:-80,left:"30%",width:300,height:300,borderRadius:"50%",background:`radial-gradient(circle,${D.accG} 0%,transparent 70%)`,pointerEvents:"none"}}/>
-    <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"space-between",padding:"64px 28px 48px",position:"relative"}}>
-      <div><div style={{marginBottom:24}}><LFLogo D={D}/></div>
-        <div style={{fontSize:48,fontWeight:900,color:D.t,lineHeight:0.95,letterSpacing:"-2.5px",marginBottom:14}}>YOUR<br/>PORTAL.</div>
-        <div style={{fontSize:13,color:D.ts,lineHeight:1.7,marginBottom:30}}>Daily check-ins. Every metric.<br/>Fully visualised. Built for high performers.</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{["Check-In","Progress","Wins","Body Fat","Inch Loss","Weekly Measurements"].map(t=><span key={t} style={{background:D.accG,border:`1px solid ${D.brd}`,borderRadius:20,padding:"5px 12px",fontSize:11,color:D.ts}}>{t}</span>)}</div>
+    <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"space-between",padding:"48px 24px 36px",position:"relative"}}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",textAlign:"center"}}>
+        <div style={{marginBottom:18}}><LFLogo D={D}/></div>
+        <div style={{fontSize:44,fontWeight:900,color:D.t,lineHeight:0.95,letterSpacing:"-2px",marginBottom:12}}>YOUR<br/>PORTAL.</div>
+        <div style={{fontSize:12.5,color:D.ts,lineHeight:1.6,marginBottom:18,maxWidth:280}}>Daily check-ins. Every metric.<br/>Fully visualised. Built for high performers.</div>
+        
+        {/* Feature Pills */}
+        <div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:6,maxWidth:320}}>
+          {["Check-in","Progress","Wins","Body fat","Inch loss","Measurements"].map(t=>(
+            <span key={t} style={{background:D.c1,border:`1px solid ${D.brd}`,borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:600,color:D.acc}}>{t}</span>
+          ))}
+        </div>
+
+        {/* Upward Trendline Graph (matching user screenshot) */}
+        <div style={{width:"100%",display:"flex",justifyContent:"center",padding:"14px 0 10px"}}>
+          <svg width="150" height="75" viewBox="0 0 150 75" fill="none" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.9,filter:"drop-shadow(0 0 14px rgba(59,130,246,0.6))"}}>
+            <path d="M15 58 L45 42 L68 50 L95 26 L118 34 L138 15" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+            <circle cx="138" cy="15" r="5" fill="#3b82f6"/>
+          </svg>
+        </div>
       </div>
+
       <div>
         {authError && (
           <div style={{padding:"10px 14px",borderRadius:10,background:D.rG,border:`1px solid ${D.r}40`,color:D.r,fontSize:12,fontWeight:600,marginBottom:12}}>
             {authError}
           </div>
         )}
-        <form onSubmit={handleEmailLogin}>
-          <div style={{marginBottom:10}}>
-            <input 
-              type="email" 
-              placeholder="Email address" 
-              value={email} 
-              autoComplete="username"
-              onChange={e=>setEmail(e.target.value)} 
-              style={{width:"100%",padding:14,borderRadius:12,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:14,outline:"none",boxSizing:"border-box"}}
-            />
+        <form onSubmit={handleEmailLogin} style={{display:"flex",flexDirection:"column",gap:12}}>
+          {/* Card-style Email Input (matching user screenshot) */}
+          <div style={{background:D.c1,border:`1.5px solid ${D.inpBrd}`,borderRadius:16,padding:"10px 14px"}}>
+            <div style={{fontSize:11,fontWeight:500,color:D.ts,marginBottom:4}}>Email</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <Ic.Mail c={D.ts} sz={16}/>
+              <input 
+                type="email" 
+                placeholder="name@example.com" 
+                value={email} 
+                autoComplete="username"
+                onChange={e=>setEmail(e.target.value)} 
+                style={{width:"100%",background:"transparent",border:"none",color:D.t,fontSize:14,fontWeight:600,outline:"none"}}
+              />
+            </div>
           </div>
-          <div style={{marginBottom:14}}>
-            <input 
-              type="password" 
-              placeholder="Password" 
-              value={password} 
-              autoComplete="current-password"
-              onChange={e=>setPassword(e.target.value)} 
-              style={{width:"100%",padding:14,borderRadius:12,background:D.inp,border:`1px solid ${D.inpBrd}`,color:D.t,fontSize:14,outline:"none",boxSizing:"border-box"}}
-            />
+
+          {/* Card-style Password Input (matching user screenshot) */}
+          <div style={{background:D.c1,border:`1.5px solid ${D.inpBrd}`,borderRadius:16,padding:"10px 14px"}}>
+            <div style={{fontSize:11,fontWeight:500,color:D.ts,marginBottom:4}}>Password</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <Ic.Lock c={D.ts} sz={16}/>
+              <input 
+                type="password" 
+                placeholder="••••••••" 
+                value={password} 
+                autoComplete="current-password"
+                onChange={e=>setPassword(e.target.value)} 
+                style={{width:"100%",background:"transparent",border:"none",color:D.t,fontSize:14,fontWeight:600,outline:"none"}}
+              />
+            </div>
           </div>
-          <button type="submit" disabled={loading || !email || !password} style={{width:"100%",padding:16,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:loading||!email||!password?"not-allowed":"pointer",opacity:loading||!email||!password?0.7:1,boxShadow:`0 0 24px ${D.accG}`}}>
+
+          <button type="submit" disabled={loading || !email || !password} style={{width:"100%",padding:16,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:loading||!email||!password?"not-allowed":"pointer",opacity:loading||!email||!password?0.7:1,boxShadow:`0 0 24px ${D.accG}`,marginTop:4}}>
             {loading ? "Signing In..." : "Sign In to Portal"}
           </button>
         </form>
@@ -1894,7 +2021,7 @@ export default function App() {
     }
     setStage("portal");
   }}/>;
-  if(stage==="coach") return <CoachDashboard D={D} onBack={()=>setStage("portal")} plans={plans} setPlans={setPlans}/>;
+  if(stage==="coach") return <CoachDashboard D={D} theme={theme} toggleTheme={toggle} onBack={()=>setStage("portal")} plans={plans} setPlans={setPlans}/>;
 
   return (
     <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",overflow:"hidden",position:"relative"}}>
