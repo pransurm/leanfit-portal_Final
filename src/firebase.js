@@ -21,6 +21,16 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
+export async function registerWithEmail(email, password) {
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const freshToken = await getIdToken(userCredential.user, true);
+    return { user: userCredential.user, token: freshToken, error: null };
+  } catch (err) {
+    return { user: null, error: err.message, code: err.code };
+  }
+}
+
 export async function loginWithEmail(email, password) {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);

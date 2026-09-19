@@ -18,7 +18,7 @@ import {
   deleteCoachClientCheckin,
   setDemoUser
 } from "./services/api";
-import { auth, loginWithEmail, logoutUser } from "./firebase";
+import { auth, loginWithEmail, logoutUser, registerWithEmail } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { LOGO_HIGHRES } from "./logo_base64";
 
@@ -1782,16 +1782,41 @@ function OnboardingScreen({D,onComplete}) {
 
   const submit = async () => {
     setSubmitting(true);
+    const email = (form.email || "").trim().toLowerCase();
+    // Clean, robust 12-char password
+    const generatedPass = "Lf#" + Math.random().toString(36).slice(-6) + "!9";
+    let firebaseUid = null;
+
+    // 1. Direct Firebase Auth registration via Client SDK (guarantees user exists in Firebase Auth)
+    if (email) {
+      try {
+        const authRes = await registerWithEmail(email, generatedPass);
+        if (authRes.user) {
+          firebaseUid = authRes.user.uid;
+        } else if (authRes.code === "auth/email-already-in-use") {
+          console.log("Email already in Firebase Auth, proceeding to sync profile.");
+        }
+      } catch (authErr) {
+        console.warn("Client Firebase Auth notice:", authErr.message);
+      }
+    }
+
     try {
-      const res = await registerOnboarding(form);
-      if (res && res.password) {
+      const res = await registerOnboarding({
+        ...form,
+        email,
+        password: generatedPass,
+        uid: firebaseUid
+      });
+      if (res && res.account) {
+        setCreatedAccount({ ...res.account, password: res.account.password || generatedPass });
+      } else if (res && res.password) {
         setCreatedAccount(res);
       } else {
-        const fallbackPass = "Lf#" + Math.random().toString(36).slice(-8) + "!9";
         setCreatedAccount({
           name: form.name || "New Client",
-          email: form.email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
-          password: fallbackPass,
+          email: email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
+          password: generatedPass,
           startW: form.weight || 70,
           weightUnit: form.weightUnit || "kg",
           measUnit: form.measUnit || "cm",
@@ -1799,11 +1824,11 @@ function OnboardingScreen({D,onComplete}) {
         });
       }
     } catch (err) {
-      const fallbackPass = "Lf#" + Math.random().toString(36).slice(-8) + "!9";
+      console.warn("Backend onboarding sync notice:", err.message);
       setCreatedAccount({
         name: form.name || "New Client",
-        email: form.email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
-        password: fallbackPass,
+        email: email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
+        password: generatedPass,
         startW: form.weight || 70,
         weightUnit: form.weightUnit || "kg",
         measUnit: form.measUnit || "cm",

@@ -465,7 +465,9 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
     if not email:
         email = f"{client_id}@leanfit.io"
 
-    tough_password = generate_tough_password(14)
+    user_password = payload.get("password") or generate_tough_password(14)
+    passed_uid = payload.get("uid")
+    uid = passed_uid or client_id
     weight_unit = payload.get("weightUnit", "kg")
     meas_unit = payload.get("measUnit", "cm")
 
@@ -493,9 +495,7 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
         height_cm = raw_h
         height_in = round(raw_h / 2.54, 1)
 
-    # 1. Firebase Auth user creation
-    uid = client_id
-    import threading
+    # 1. Firebase Auth user creation / claims sync
     def try_firebase_auth():
         nonlocal uid
         try:
@@ -504,31 +504,37 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
             try:
                 user = firebase_auth.get_user_by_email(email)
                 uid = user.uid
-                firebase_auth.update_user(uid, password=tough_password)
+                firebase_auth.update_user(uid, password=user_password)
+                print(f"[AUTH OK] Updated existing Firebase user password for {email} (UID: {uid})", flush=True)
             except Exception:
                 pass
 
             if user is None:
                 try:
-                    user = firebase_auth.create_user(
-                        email=email,
-                        password=tough_password,
-                        display_name=name
-                    )
+                    create_args = {
+                        "email": email,
+                        "password": user_password,
+                        "display_name": name
+                    }
+                    if passed_uid:
+                        create_args["uid"] = passed_uid
+                    user = firebase_auth.create_user(**create_args)
                     uid = user.uid
-                except Exception:
-                    pass
+                    print(f"[AUTH OK] Created new Firebase user for {email} (UID: {uid})", flush=True)
+                except Exception as e:
+                    print(f"[AUTH WARN] Could not create user in Firebase Admin: {e}", flush=True)
 
             try:
                 firebase_auth.set_custom_user_claims(uid, {"role": "client", "clientId": client_id})
-            except Exception:
-                pass
-        except Exception:
-            pass
+                print(f"[AUTH OK] Set custom claims for {uid}: role=client, clientId={client_id}", flush=True)
+            except Exception as e:
+                print(f"[AUTH WARN] Could not set custom claims: {e}", flush=True)
+        except Exception as e:
+            print(f"[AUTH WARN] Firebase Admin Auth error: {e}", flush=True)
 
     t = threading.Thread(target=try_firebase_auth, daemon=True)
     t.start()
-    t.join(timeout=3.0)
+    t.join(timeout=10.0)
 
     # 2. Firestore: users/{uid}
     try:
@@ -541,8 +547,8 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
             "clientId": client_id,
             "updatedAt": datetime.now(timezone.utc).isoformat()
         }, merge=True)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[DB WARN] Firestore users doc notice: {e}", flush=True)
 
     # 3. Firestore: clients/{client_id}
     client_data = {

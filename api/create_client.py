@@ -1,4 +1,4 @@
-"""Script to create a backend user and client profile in Firestore & Firebase Auth."""
+"""Script to create or update client accounts in Firestore & Firebase Auth."""
 import sys
 import os
 import secrets
@@ -16,77 +16,56 @@ except Exception:
 
 from api.database import get_db
 
-def generate_tough_password(length=14):
-    """Generates a cryptographically strong, tough password."""
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
-    # Ensure at least 2 uppercase, 2 lowercase, 2 digits, 2 symbols
-    password = [
-        secrets.choice(string.ascii_uppercase),
-        secrets.choice(string.ascii_uppercase),
-        secrets.choice(string.ascii_lowercase),
-        secrets.choice(string.ascii_lowercase),
-        secrets.choice(string.digits),
-        secrets.choice(string.digits),
-        secrets.choice("!@#$%^&*()-_=+"),
-        secrets.choice("!@#$%^&*()-_=+"),
-    ]
-    password += [secrets.choice(alphabet) for _ in range(length - len(password))]
-    secrets.SystemRandom().shuffle(password)
-    return "".join(password)
-
-def create_adesh():
+def create_or_update_client(
+    name: str,
+    email: str,
+    password: str,
+    start_w: float = 70.0,
+    height: float = 175.0,
+    city: str = "Mumbai",
+    prog: str = "LeanFit 6-Month Transformation",
+    client_id: str = None
+):
     db = get_db()
-    name = "Adesh"
-    email = "adesh@leanfit.io"
-    client_id = "adesh"
-    start_w = 94.0
+    clean_name = "".join(c for c in name.lower() if c.isalnum())
+    if not client_id:
+        client_id = clean_name or "client"
     start_w_lbs = round(start_w * 2.20462, 1)
-    tough_password = generate_tough_password(14)
 
-    print(f"Creating backend user and client record for {name} ({email})...")
+    print(f"\nProvisioning account for {name} ({email})...")
 
-    # 1. Firebase Auth user creation (with timeout in case ADC is offline)
+    # 1. Firebase Auth user creation or password update
     uid = client_id
-    import threading
-    def try_firebase_auth():
-        nonlocal uid
+    try:
+        from firebase_admin import auth as firebase_auth
+        user = None
         try:
-            from firebase_admin import auth as firebase_auth
-            user = None
+            user = firebase_auth.get_user_by_email(email)
+            uid = user.uid
+            firebase_auth.update_user(uid, password=password, display_name=name)
+            print(f"  [OK] Found existing Firebase Auth user ({uid}). Updated password and display name.")
+        except Exception:
+            pass
+
+        if user is None:
             try:
-                user = firebase_auth.get_user_by_email(email)
-                print(f"  [INFO] User already exists in Firebase Auth with UID: {user.uid}")
+                user = firebase_auth.create_user(
+                    email=email,
+                    password=password,
+                    display_name=name
+                )
                 uid = user.uid
-                firebase_auth.update_user(uid, password=tough_password)
-                print(f"  [OK] Updated password to tough password for {email}")
-            except Exception:
-                pass
-
-            if user is None:
-                try:
-                    user = firebase_auth.create_user(
-                        email=email,
-                        password=tough_password,
-                        display_name=name
-                    )
-                    uid = user.uid
-                    print(f"  [OK] Created user in Firebase Auth with UID: {uid}")
-                except Exception as e:
-                    print(f"  [WARN] Notice on Firebase Auth user creation: {e}")
-
-            try:
-                firebase_auth.set_custom_user_claims(uid, {"role": "client", "clientId": client_id})
-                print(f"  [OK] Set custom claims for {uid}: role=client, clientId={client_id}")
+                print(f"  [OK] Created new user in Firebase Auth with UID: {uid}")
             except Exception as e:
-                print(f"  [WARN] Notice on custom claims: {e}")
-        except Exception as e:
-            print(f"  [WARN] Firebase Admin Auth notice: {e}")
+                print(f"  [WARN] Firebase Auth create_user error: {e}")
 
-    t = threading.Thread(target=try_firebase_auth, daemon=True)
-    t.start()
-    t.join(timeout=3.0)
-    if t.is_alive():
-        print("  [INFO] Firebase Auth remote API call timed out (offline/local mode). Proceeding with Firestore user record.")
+        try:
+            firebase_auth.set_custom_user_claims(uid, {"role": "client", "clientId": client_id})
+            print(f"  [OK] Set custom claims for {uid}: role=client, clientId={client_id}")
+        except Exception as e:
+            print(f"  [WARN] Custom claims notice: {e}")
+    except Exception as e:
+        print(f"  [WARN] Firebase Admin Auth error: {e}")
 
     # 2. Firestore: users collection
     try:
@@ -99,7 +78,7 @@ def create_adesh():
             "clientId": client_id,
             "updatedAt": datetime.now(timezone.utc).isoformat()
         }, merge=True)
-        print(f"  [OK] Created Firestore document users/{uid}")
+        print(f"  [OK] Synced Firestore document users/{uid}")
     except Exception as e:
         print(f"  [WARN] Firestore users doc notice: {e}")
 
@@ -108,19 +87,19 @@ def create_adesh():
         client_ref = db.collection("clients").document(client_id)
         client_data = {
             "name": name,
-            "initials": "AD",
+            "initials": "".join([p[0].upper() for p in name.split()[:2]]) or "LF",
             "email": email,
             "phase": "Phase I",
             "week": 1,
             "startDate": datetime.now(timezone.utc).strftime("%d-%m-%Y"),
             "startW": start_w,
             "startWLbs": start_w_lbs,
-            "targetW": 85.0,
+            "targetW": round(start_w - 8.0, 1),
             "latestW": start_w,
-            "height": 178.0,
-            "heightInches": 70.1,
-            "city": "Mumbai",
-            "prog": "LeanFit 6-Month Transformation",
+            "height": height,
+            "heightInches": round(height / 2.54, 1),
+            "city": city,
+            "prog": prog,
             "coachStepsGoal": 8000,
             "weightUnit": "kg",
             "measUnit": "cm",
@@ -130,11 +109,11 @@ def create_adesh():
             "streak": 1,
             "daysSince": 0,
             "checkedIn": False,
-            "coachNote": "Initial baseline weight 94 kg. Goal: Fat loss & recomposition.",
+            "coachNote": f"Initial baseline weight {start_w} kg. Goal: Fat loss & recomposition.",
             "createdAt": datetime.now(timezone.utc).isoformat()
         }
         client_ref.set(client_data, merge=True)
-        print(f"  [OK] Created Firestore document clients/{client_id} with weight={start_w} kg ({start_w_lbs} lbs)")
+        print(f"  [OK] Synced Firestore document clients/{client_id}")
 
         # Baseline measurement record
         client_ref.collection("measurements").document("baseline").set({
@@ -150,27 +129,49 @@ def create_adesh():
         notif_ref.set({
             "id": f"notif_{client_id}",
             "type": "NEW_CLIENT_ADDED",
-            "title": "New Client Added: Adesh",
-            "body": f"Adesh has been added with starting weight 94 kg.",
+            "title": f"New Client Added: {name}",
+            "body": f"{name} has been added with starting weight {start_w} kg.",
             "clientId": client_id,
             "read": False,
             "createdAt": datetime.now(timezone.utc).isoformat()
         }, merge=True)
-        print(f"  [OK] Created Coach notification for Adesh")
+        print(f"  [OK] Created Coach notification for {name}")
 
     except Exception as e:
         print(f"  [WARN] Firestore clients doc notice: {e}")
 
-    print("\n" + "="*50)
-    print("ADESH USER CREATION SUMMARY")
-    print("="*50)
+    print("=" * 50)
+    print(f"CLIENT CREDENTIALS READY")
+    print("=" * 50)
     print(f"  Name:     {name}")
-    print(f"  Email/ID: {email}")
-    print(f"  Password: {tough_password}")
-    print(f"  Weight:   {start_w} kg ({start_w_lbs} lbs)")
+    print(f"  Email:    {email}")
+    print(f"  Password: {password}")
     print(f"  Status:   Active")
-    print("="*50)
-    return {"name": name, "email": email, "password": tough_password, "weight": start_w}
+    print("=" * 50)
+    return {"name": name, "email": email, "password": password}
+
 
 if __name__ == "__main__":
-    create_adesh()
+    # Check if CLI args provided: python3 api/create_client.py <email> <password> [name]
+    if len(sys.argv) >= 3:
+        cli_email = sys.argv[1].strip()
+        cli_password = sys.argv[2].strip()
+        cli_name = sys.argv[3].strip() if len(sys.argv) > 3 else cli_email.split("@")[0].capitalize()
+        create_or_update_client(name=cli_name, email=cli_email, password=cli_password)
+    else:
+        # Default: provision/update both Pranshur and Adesh with Password@1234
+        print("Provisioning default clients (Pranshur and Adesh)...")
+        create_or_update_client(
+            name="Pranshur Mishra",
+            email="pransurm@gmail.com",
+            password="Password@1234",
+            start_w=70.0,
+            client_id="pranshur"
+        )
+        create_or_update_client(
+            name="Adesh",
+            email="adesh@leanfit.io",
+            password="Password@1234",
+            start_w=94.0,
+            client_id="adesh"
+        )
