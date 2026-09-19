@@ -5,11 +5,13 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 let activeDemoUser = null;
 
 export function setDemoUser(userOrRole) {
-  activeDemoUser = userOrRole;
+  if (import.meta.env.DEV) {
+    activeDemoUser = userOrRole;
+  }
 }
 
 export function getDemoUser() {
-  return activeDemoUser;
+  return import.meta.env.DEV ? activeDemoUser : null;
 }
 
 async function request(endpoint, options = {}) {
@@ -21,7 +23,7 @@ async function request(endpoint, options = {}) {
 
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
-  } else if (activeDemoUser) {
+  } else if (import.meta.env.DEV && activeDemoUser) {
     headers["X-Demo-User"] = activeDemoUser;
   }
 

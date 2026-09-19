@@ -17,11 +17,16 @@ class Settings:
         os.getenv("ENABLE_DEMO_AUTH", "false").lower() == "true"
     )
 
-    CORS_ORIGINS: list[str] = [
+    _base_origins = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
     ]
+    if os.getenv("FRONTEND_URL"):
+        _base_origins.append(os.getenv("FRONTEND_URL").strip())
+    if os.getenv("ALLOWED_ORIGINS"):
+        _base_origins.extend([o.strip() for o in os.getenv("ALLOWED_ORIGINS").split(",") if o.strip()])
+    CORS_ORIGINS: list[str] = list(dict.fromkeys(_base_origins))
 
 settings = Settings()

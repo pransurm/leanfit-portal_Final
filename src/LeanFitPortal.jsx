@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { 
+  fetchMe,
   fetchClientData, 
   submitCheckIn, 
   submitMeasurement, 
@@ -18,7 +19,7 @@ import {
   deleteCoachClientCheckin,
   setDemoUser
 } from "./services/api";
-import { auth, loginWithEmail, logoutUser, registerWithEmail } from "./firebase";
+import { auth, loginWithEmail, logoutUser } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { LOGO_HIGHRES } from "./logo_base64";
 
@@ -28,35 +29,6 @@ const THEMES = {
   light:{ bg:"#f0f4fc",c1:"#ffffff",c2:"#f5f8fe",c3:"#e8effa",inp:"rgba(255,255,255,0.95)",inpBrd:"rgba(15,82,186,0.25)",brd:"rgba(15,82,186,0.15)",acc:"#0f52ba",accD:"#0a3a8a",accG:"rgba(15,82,186,0.12)",g:"#16a34a",gG:"rgba(22,163,74,0.12)",am:"#b45309",amG:"rgba(180,83,9,0.12)",r:"#dc2626",rG:"rgba(220,38,38,0.12)",pur:"#0369a1",purG:"rgba(3,105,161,0.12)",t:"#0d1b3e",ts:"rgba(13,27,62,0.62)",tm:"rgba(13,27,62,0.35)",dark:false }
 };
 
-/* ═══ DATA ══════════════════════════════════════════════════ */
-// dayNo=8 → isMeasDay=true so weekly check-in is visible in demo
-const CLI = { name:"Ankit", phase:"Phase I", startDate:"1 Sep 2026", startW:68.05, week:2, dayNo:8, height:175, prog:"LeanFit 6-Month Transformation", phaseWeeks:12, coachStepsGoal:8000 };
-
-const SEED = [
-  {date:"1/9",w:68.05,e:7,sl:6,st:5,steps:4200,wrk:0,water:2.0,meals:4,multi:true,note:""},
-  {date:"2/9",w:67.90,e:7,sl:7,st:4,steps:5100,wrk:1,water:2.5,meals:5,multi:true,note:""},
-  {date:"3/9",w:67.80,e:8,sl:7,st:3,steps:6200,wrk:2,water:2.5,meals:5,multi:false,note:"Feeling good"},
-  {date:"4/9",w:68.00,e:6,sl:6,st:5,steps:3800,wrk:2,water:2.0,meals:2,multi:true,note:"Office dinner, hard to stick to plan"},
-  {date:"5/9",w:67.70,e:8,sl:8,st:3,steps:7200,wrk:3,water:3.0,meals:5,multi:true,note:""},
-  {date:"6/9",w:67.60,e:9,sl:8,st:2,steps:8100,wrk:4,water:3.0,meals:5,multi:true,note:"Best day this week"},
-  {date:"7/9",w:67.50,e:8,sl:7,st:3,steps:7800,wrk:4,water:2.8,meals:4,multi:true,note:""},
-];
-const MEAS = [
-  {date:"1 Sep",arms:32.0,waist:88.0,quads:58.0,chest:96.0,shoulders:108.0,hips:100.0,neck:37.0},
-  {date:"8 Sep",arms:31.5,waist:86.5,quads:57.5,chest:95.5,shoulders:107.0,hips:99.0,neck:36.5},
-];
-const WINS_D = [
-  {week:1,date:"7 Sep 2026",emoji:"🔥",text:"Hit 8k steps for the first time ever on Friday! Completed all 3 workouts. Slept before midnight 5 nights in a row."},
-  {week:2,date:"14 Sep 2026",emoji:"💪",text:"Down 0.55 kg this week. No 3pm crash for the first time in years. Waist down 1.5 cm. Protein target 6 out of 7 days."},
-];
-// Coach client mock data — extended with compliance detail
-const COACH_CLIENTS = [
-  {id:1,name:"Ankit",initials:"AK",phase:"Phase I",week:2,startDate:"1 Sep 2026",endDate:"24 Nov 2026",startW:68.05,latestW:67.80,adherence:87,checkedIn:true,streak:7,city:"Mumbai",prog:"6-Month",status:"active",latestMeals:5,latestSteps:8700,latestWater:3.0,latestStress:2,latestEnergy:9,daysSince:0,note:""},
-  {id:2,name:"Ninad Naik",initials:"NN",phase:"Phase I",week:1,startDate:"8 Sep 2026",endDate:"1 Dec 2026",startW:71.0,latestW:70.6,adherence:71,checkedIn:false,streak:4,city:"Mumbai",prog:"6-Month",status:"active",latestMeals:2,latestSteps:3500,latestWater:1.5,latestStress:7,latestEnergy:5,daysSince:1,note:"Struggling with travel"},
-  {id:3,name:"Srikanth",initials:"SK",phase:"Phase I",week:3,startDate:"25 Aug 2026",endDate:"18 Nov 2026",startW:85.0,latestW:83.4,adherence:92,checkedIn:true,streak:15,city:"Bangalore",prog:"3-Month",status:"active",latestMeals:5,latestSteps:9200,latestWater:3.0,latestStress:2,latestEnergy:9,daysSince:0,note:""},
-  {id:4,name:"Gaurav",initials:"GV",phase:"Phase I",week:1,startDate:"10 Sep 2026",endDate:"10 Mar 2027",startW:92.0,latestW:91.5,adherence:65,checkedIn:false,streak:2,city:"Delhi",prog:"6-Month",status:"paused",latestMeals:1,latestSteps:2100,latestWater:1.0,latestStress:9,latestEnergy:3,daysSince:3,note:"On family trip",pauseReason:"Travel / Work Trip",resumeDate:"20 Sep 2026"},
-  {id:5,name:"Adesh",initials:"AD",phase:"Phase I",week:1,startDate:"19 Sep 2026",endDate:"19 Mar 2027",startW:94.0,latestW:94.0,adherence:100,checkedIn:true,streak:1,city:"Mumbai",prog:"6-Month",status:"active",latestMeals:5,latestSteps:8000,latestWater:3.0,latestStress:3,latestEnergy:8,daysSince:0,note:"New intake client.",email:"adesh@leanfit.io"},
-];
 const PROTEIN_OPTS = ["Eggs","Chicken","Paneer","Whey Protein","Tofu","Fish","Red Meat","Greek Yoghurt","Soya Chunks","Edamame"];
 const MEAS_PARTS = [
   {k:"mArms",l:"Arms",guide:"Flexed bicep, widest point, mid-upper arm"},
@@ -94,7 +66,8 @@ function clientAlerts(c) {
   else if (c.daysSince>=2) a.push({lvl:"r",msg:`${c.daysSince} days without check-in`});
   else if (!c.checkedIn) a.push({lvl:"am",msg:"Not checked in today"});
   if (c.latestMeals<=2) a.push({lvl:"am",msg:`Meals ${c.latestMeals}/5`});
-  if (c.latestSteps < CLI.coachStepsGoal*0.5) a.push({lvl:"am",msg:`Steps very low (${c.latestSteps})`});
+  const stepsGoal = c.coachStepsGoal || 8000;
+  if (c.latestSteps < stepsGoal*0.5) a.push({lvl:"am",msg:`Steps very low (${c.latestSteps})`});
   if (c.latestStress>=8) a.push({lvl:"am",msg:`Stress ${c.latestStress}/10`});
   if (c.latestWater<1.5) a.push({lvl:"am",msg:"Hydration critical"});
   return a;
@@ -373,7 +346,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   // - Body measurements every 7 days (e.g. Day 8, 15, 22...)
   // - Progress photos every 14 days (e.g. Day 15, 29, 43...)
   // - Reminders appear 3 days prior to due day
-  const dayCount = clientProfile?.dayNo || (data.length + 1);
+  const dayCount = data.length + 1;
   const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
   const isMeasDay = daysUntilMeas === 0;
   const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
@@ -385,17 +358,17 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   const [showPhotoSection, setShowPhotoSection] = useState(isPhotoDay);
 
   const unit = weightUnit||pendingUnit;
-  const startW = clientProfile?.startW || CLI.startW;
-  const startDisp = toUnit(startW, unit);
+  const startW = clientProfile?.startW ?? null;
+  const startDisp = startW ? toUnit(startW, unit) : "—";
   const daysIntoWeek = (dayCount - 1) % 7; // 0 = first day of a new week → workout count resets
   const thisWeekData = daysIntoWeek>0 ? data.slice(-daysIntoWeek) : [];
   const weekWorkouts = thisWeekData.length>0?Math.max(...thisWeekData.map(d=>d.wrk??0)):0;
-  const diff = form.w?+(startW-fromUnit(form.w,unit)).toFixed(2):null;
-  const curWeek = clientProfile?.week || Math.max(1, Math.ceil(dayCount / 7));
+  const diff = (form.w && startW) ? +(startW-fromUnit(form.w,unit)).toFixed(2) : null;
+  const curWeek = Math.max(1, Math.ceil(dayCount / 7));
   const effUnit = measUnit||"cm";
   const waistCm = effUnit==="inches"?+(+measForm.mWaist*2.54).toFixed(1):measForm.mWaist;
   const neckCm  = effUnit==="inches"?+(+measForm.mNeck*2.54).toFixed(1):measForm.mNeck;
-  const autoBF  = calcBF(waistCm,neckCm,clientProfile?.height || CLI.height);
+  const autoBF  = calcBF(waistCm,neckCm,clientProfile?.height ?? 175);
 
   const submit = async () => {
     const errs = validateCheckIn(form, isMeasDay, measForm);
@@ -693,15 +666,16 @@ function Dashboard({D, data, weightUnit, clientProfile}) {
   const [cf,setCf]=useState("2W");
   const fd=filterData(data,cf);
   const last=data[data.length-1];
-  const bestW=data.length>0?Math.min(...data.map(d=>d.w)):(clientProfile?.startW||CLI.startW);
-  const startW=clientProfile?.startW || CLI.startW;
-  const totalLost=+(startW-bestW).toFixed(2);
-  const curWeek = clientProfile?.week || Math.max(1, Math.ceil(Math.max(1, data.length) / 7));
+  const startW=clientProfile?.startW ?? (data.length > 0 ? data[0].w : null);
+  const bestW=data.length>0?Math.min(...data.map(d=>d.w)):startW;
+  const totalLost=(startW && bestW)?+(startW-bestW).toFixed(2):0;
+  const dayCount = data.length + 1;
+  const curWeek = Math.max(1, Math.ceil(dayCount / 7));
   const totalWeeks = clientProfile?.phaseWeeks || 12;
   const phasePct=Math.round((curWeek/totalWeeks)*100);
   const arcLen=Math.PI*80; const arcFill=(phasePct/100)*arcLen;
   const unit=weightUnit||"kg";
-  const stepsGoal = clientProfile?.coachStepsGoal || CLI.coachStepsGoal;
+  const stepsGoal = clientProfile?.coachStepsGoal || 8000;
   const adh=calcAdh(data, stepsGoal);
   const chartData=fd.map(d=>({...d,w:toUnit(d.w,unit)}));
   const TT2=TT({D});
@@ -803,7 +777,7 @@ function Dashboard({D, data, weightUnit, clientProfile}) {
 /* ═══ COACH DASHBOARD V6 — Command Centre + Client Deep Dive ═ */
 function CoachDashboard({D, theme, toggleTheme, onBack, plans, setPlans}) {
   const [sel, setSel] = useState(null);
-  const [clients, setClients] = useState(COACH_CLIENTS);
+  const [clients, setClients] = useState([]);
   const [tlFilter, setTlFilter] = useState("all");
 
   useEffect(() => {
@@ -871,12 +845,13 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
     const [pushed,setPushed]=useState("");
     const alerts=clientAlerts(c);
     const alertColor=(lvl)=>({r:D.r,am:D.am,g:D.g}[lvl]||D.ts);
-    const clientAdh=calcAdh(SEED.slice(-7), CLI.coachStepsGoal); // use SEED as proxy
+    const clientAdh=calcAdh(checkins, c.coachStepsGoal || 8000);
     const tl=trafficLight(c);
     const clientId = c.id ? String(c.id).toLowerCase() : c.name.toLowerCase().replace(" ", "_");
 
     const [checkins, setCheckins] = useState([]);
     const [loadingCheckins, setLoadingCheckins] = useState(true);
+    const [deepDiveError, setDeepDiveError] = useState("");
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [deleteReason, setDeleteReason] = useState("");
     const [isDeleting, setIsDeleting] = useState(false);
@@ -887,6 +862,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
       let isMounted = true;
       async function loadDeepDive() {
         setLoadingCheckins(true);
+        setDeepDiveError("");
         try {
           const res = await fetchCoachClientDeepDive(clientId);
           if (isMounted && res) {
@@ -900,11 +876,8 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
         } catch (err) {
           console.warn("Could not fetch deep dive data:", err.message);
           if (isMounted) {
-            setCheckins([...SEED].reverse().map(s => ({
-              id: s.fullDate || s.date,
-              ...s,
-              fullDate: formatDisplayDate(s.fullDate || s.date)
-            })));
+            setCheckins([]);
+            setDeepDiveError("Failed to load client check-ins. Please verify network or database connection.");
           }
         } finally {
           if (isMounted) setLoadingCheckins(false);
@@ -988,6 +961,12 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
         </div>
 
         <div style={{flex:1,overflowY:"auto",padding:16}}>
+          {deepDiveError && (
+            <div style={{background:`${D.r}18`,border:`1px solid ${D.r}40`,borderRadius:10,padding:"10px 14px",color:D.r,fontSize:12,fontWeight:600,marginBottom:12}}>
+              ⚠️ {deepDiveError}
+            </div>
+          )}
+
           {/* Alerts */}
           {alerts.length>0 && <div style={{marginBottom:12}}>
             {alerts.map((a,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"center",background:`${alertColor(a.lvl)}15`,borderRadius:8,padding:"8px 12px",marginBottom:6,border:`1px solid ${alertColor(a.lvl)}30`}}>
@@ -1009,7 +988,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
           <GCard D={D} style={{marginBottom:12}}>
             <SL D={D}>Latest Check-In Snapshot</SL>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-              {[{l:"Meals",v:`${c.latestMeals}/5`,c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:"Steps",v:c.latestSteps.toLocaleString(),c:c.latestSteps>=CLI.coachStepsGoal?D.g:c.latestSteps>=CLI.coachStepsGoal*0.7?D.am:D.r},{l:"Water",v:`${c.latestWater}L`,c:c.latestWater>=3?D.g:c.latestWater>=2?D.am:D.r},{l:"Energy",v:`${c.latestEnergy}/10`,c:c.latestEnergy>=7?D.g:c.latestEnergy>=5?D.am:D.r},{l:"Stress",v:`${c.latestStress}/10`,c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r},{l:"Streak",v:`${c.streak}d`,c:c.streak>=7?D.g:c.streak>=3?D.am:D.r}].map((s,i)=>(
+              {[{l:"Meals",v:`${c.latestMeals}/5`,c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:"Steps",v:c.latestSteps.toLocaleString(),c:c.latestSteps>=(c.coachStepsGoal||8000)?D.g:c.latestSteps>=(c.coachStepsGoal||8000)*0.7?D.am:D.r},{l:"Water",v:`${c.latestWater}L`,c:c.latestWater>=3?D.g:c.latestWater>=2?D.am:D.r},{l:"Energy",v:`${c.latestEnergy}/10`,c:c.latestEnergy>=7?D.g:c.latestEnergy>=5?D.am:D.r},{l:"Stress",v:`${c.latestStress}/10`,c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r},{l:"Streak",v:`${c.streak}d`,c:c.streak>=7?D.g:c.streak>=3?D.am:D.r}].map((s,i)=>(
                 <div key={i} style={{background:D.c2,borderRadius:8,padding:"8px 10px",textAlign:"center",border:`1px solid ${D.brd}`}}>
                   <div style={{fontSize:14,fontWeight:700,color:s.c}}>{s.v}</div>
                   <div style={{fontSize:9,color:D.ts,marginTop:2}}>{s.l}</div>
@@ -1034,7 +1013,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
           <GCard D={D} style={{marginBottom:12}}>
             <SL D={D}>Weight Trend (Last 7 Days)</SL>
             <ResponsiveContainer width="100%" height={110}>
-              <AreaChart data={SEED.slice(-7)} margin={{top:5,right:5,bottom:0,left:-26}}>
+              <AreaChart data={checkins.slice(0, 7).reverse()} margin={{top:5,right:5,bottom:0,left:-26}}>
                 <defs><linearGradient id="cwG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={D.g} stopOpacity={0.3}/><stop offset="100%" stopColor={D.g} stopOpacity={0}/></linearGradient></defs>
                 <XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis domain={["auto","auto"]} tick={{fontSize:9,fill:D.tm}}/>
                 <Tooltip content={TT({D})}/><Area type="monotone" dataKey="w" stroke={D.g} fill="url(#cwG)" strokeWidth={2} dot={{r:2.5,fill:D.g,strokeWidth:0}} name="Weight (kg)"/>
@@ -1104,7 +1083,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
                 : <button onClick={applyResume} style={{display:"flex",alignItems:"center",gap:6,padding:"9px 16px",background:D.gG,border:`1.5px solid ${D.g}50`,borderRadius:10,color:D.g,fontWeight:700,fontSize:12,cursor:"pointer"}}><Ic.Play c={D.g} sz={14}/>Resume</button>
               }
             </div>
-            {[["Phase",c.phase],["Start Date",c.startDate],["Phase Ends",c.endDate],["Current Week",`Week ${c.week} of 12`]].map(([l,v])=>(
+            {[["Phase",c.phase],["Start Date",c.startDate],["Phase Ends",c.endDate],["Current Week",`Week ${c.week} of ${c.phaseWeeks ?? 12}`]].map(([l,v])=>(
               <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${D.brd}`}}><span style={{fontSize:12,color:D.ts}}>{l}</span><span style={{fontSize:12,fontWeight:700,color:D.t}}>{v}</span></div>
             ))}
             {(localStatus==="paused"&&c.pauseReason)&&(
@@ -1331,7 +1310,7 @@ function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needs
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:10,color:D.ts}}>7-Day Adherence</span><span style={{fontSize:10,fontWeight:700,color:c.adherence>=80?D.g:c.adherence>=60?D.am:D.r}}>{c.adherence}%</span></div>
             <div style={{height:4,background:D.brd,borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:`${c.adherence}%`,background:c.adherence>=80?D.g:c.adherence>=60?D.am:D.r,borderRadius:2}}/></div>
             <div style={{display:"flex",gap:8}}>
-              {[{l:`M ${c.latestMeals}/5`,c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:`S ${c.latestSteps.toLocaleString()}`,c:c.latestSteps>=CLI.coachStepsGoal?D.g:D.am},{l:`W ${c.latestWater}L`,c:c.latestWater>=2.5?D.g:D.am},{l:`Str ${c.latestStress}/10`,c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r}].map((s,j)=>(
+              {[{l:`M ${c.latestMeals}/5`,c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:`S ${c.latestSteps.toLocaleString()}`,c:c.latestSteps>=(c.coachStepsGoal||8000)?D.g:D.am},{l:`W ${c.latestWater}L`,c:c.latestWater>=2.5?D.g:D.am},{l:`Str ${c.latestStress}/10`,c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r}].map((s,j)=>(
                 <div key={j} style={{fontSize:9,color:s.c,fontWeight:600,padding:"2px 6px",background:`${s.c}12`,borderRadius:10}}>{s.l}</div>
               ))}
             </div>
@@ -1342,30 +1321,40 @@ function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needs
 }
 
 /* ═══ BODY, WINS, ME — (imported from V5, abbreviated for length) */
-function BodyScreen({D}) {
+function BodyScreen({D, measurements = [], clientProfile}) {
   const [bodyTab,setBodyTab]=useState("inches");
   const [sliderPos,setSliderPos]=useState(50);
   const containerRef=useRef(null);
-  const [bfH,setBfH]=useState(175),[bfNeck,setBfNeck]=useState(37),[bfWaist,setBfWaist]=useState(88);
+  const [bfH,setBfH]=useState(clientProfile?.height || 175),[bfNeck,setBfNeck]=useState(37),[bfWaist,setBfWaist]=useState(88);
   const bf=useMemo(()=>calcBF(bfWaist,bfNeck,bfH),[bfH,bfNeck,bfWaist]);
   const bfCat=!bf?["—",D.tm]:+bf<6?["Essential",D.acc]:+bf<14?["Athletic",D.g]:+bf<18?["Fit",D.pur]:+bf<25?["Average",D.am]:["High",D.r];
   const handleDrag=useCallback((e)=>{if(!containerRef.current)return;const rect=containerRef.current.getBoundingClientRect();const cX=e.touches?e.touches[0].clientX:e.clientX;setSliderPos(Math.min(100,Math.max(0,((cX-rect.left)/rect.width)*100)));},[]);
   const mParts=[["Arms","arms",D.acc],["Waist","waist",D.g],["Quads","quads",D.am],["Chest","chest",D.pur],["Shoulders","shoulders",D.r],["Hips","hips","#0284c7"],["Neck","neck","#f97316"]];
-  const inchData=MEAS.map(m=>({date:m.date,...mParts.reduce((o,[l,k])=>({...o,[l]:m[k]??null}),{})}));
-  const dateLabels=MEAS.map((m,i)=>`${m.date} (Wk ${i+1})`);
+  const inchData=(measurements||[]).map(m=>({date:m.date,...mParts.reduce((o,[l,k])=>({...o,[l]:m[k]??null}),{})}));
+  const dateLabels=(measurements||[]).map((m,i)=>`${m.date} (Wk ${i+1})`);
   const TT2=TT({D});
   return <div style={{padding:"16px 14px 24px"}}>
     <div style={{marginBottom:14}}><div style={{fontSize:9.5,color:D.acc,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Measurements</div><div style={{fontSize:21,fontWeight:900,color:D.t}}>Body Metrics</div></div>
     <div style={{display:"flex",background:D.c2,borderRadius:12,padding:3,marginBottom:16,border:`1px solid ${D.brd}`}}>{[["inches","Inch Loss"],["bf","Body Fat"],["photos","Photos"]].map(([id,l])=><button key={id} onClick={()=>setBodyTab(id)} style={{flex:1,padding:"9px 0",borderRadius:9,border:"none",cursor:"pointer",background:bodyTab===id?D.accG:"transparent",color:bodyTab===id?D.acc:D.ts,fontWeight:bodyTab===id?700:400,fontSize:11,borderBottom:bodyTab===id?`2px solid ${D.acc}`:"2px solid transparent"}}>{l}</button>)}</div>
     {bodyTab==="inches"&&<>
-      <GCard D={D} style={{marginBottom:12}}><SL D={D}>Inch Loss Trend</SL>
-        <div style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:10}}>{mParts.map(([l,,c])=><div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:D.ts}}><div style={{width:10,height:3,background:c,borderRadius:2}}/>{l}</div>)}</div>
-        <ResponsiveContainer width="100%" height={160}><LineChart data={inchData} margin={{top:5,right:5,bottom:0,left:-20}}><XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis tick={{fontSize:9,fill:D.tm}}/><Tooltip content={<TT2/>}/>{mParts.map(([l,,c])=><Line key={l} type="monotone" dataKey={l} stroke={c} strokeWidth={2.5} dot={{r:4,fill:c,strokeWidth:0}} name={l} connectNulls/>)}</LineChart></ResponsiveContainer>
-      </GCard>
-      <GCard D={D}><SL D={D}>Measurement Comparison</SL>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}><thead><tr><th style={{textAlign:"left",color:D.ts,padding:"5px 0",fontWeight:500,minWidth:80}}>Metric</th>{MEAS.map(m=><th key={m.date} style={{textAlign:"right",color:D.acc,padding:"5px 6px",fontWeight:600,fontSize:10}}>{m.date}</th>)}<th style={{textAlign:"right",color:D.g,fontWeight:700,fontSize:10}}>Lost</th></tr></thead>
-        <tbody>{mParts.map(([label,key,c])=>{const d=MEAS[0][key]&&MEAS[MEAS.length-1][key]?+(MEAS[0][key]-MEAS[MEAS.length-1][key]).toFixed(1):null;return <tr key={key} style={{borderTop:`1px solid ${D.brd}`}}><td style={{padding:"9px 0",color:D.ts,whiteSpace:"nowrap"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:c,marginRight:6}}/>{label}</td>{MEAS.map((m,i)=><td key={i} style={{textAlign:"right",padding:"9px 6px",color:i===MEAS.length-1?D.t:D.ts}}>{m[key]??'—'}</td>)}<td style={{textAlign:"right",color:d&&d>0?D.g:D.r,fontWeight:700}}>{d?d>0?`↓${d}`:`↑${Math.abs(d)}`:"—"}</td></tr>;})}</tbody></table>
-      </GCard>
+      {measurements.length===0 ? (
+        <GCard D={D} style={{textAlign:"center",padding:28}}>
+          <div style={{fontSize:28,marginBottom:8}}>📏</div>
+          <div style={{fontSize:14,fontWeight:700,color:D.t,marginBottom:4}}>No measurements logged yet</div>
+          <div style={{fontSize:12,color:D.ts,lineHeight:1.6}}>Weekly body measurements will appear here after your first weekly check-in!</div>
+        </GCard>
+      ) : (
+        <>
+          <GCard D={D} style={{marginBottom:12}}><SL D={D}>Inch Loss Trend</SL>
+            <div style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:10}}>{mParts.map(([l,,c])=><div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:D.ts}}><div style={{width:10,height:3,background:c,borderRadius:2}}/>{l}</div>)}</div>
+            <ResponsiveContainer width="100%" height={160}><LineChart data={inchData} margin={{top:5,right:5,bottom:0,left:-20}}><XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis tick={{fontSize:9,fill:D.tm}}/><Tooltip content={<TT2/>}/>{mParts.map(([l,,c])=><Line key={l} type="monotone" dataKey={l} stroke={c} strokeWidth={2.5} dot={{r:4,fill:c,strokeWidth:0}} name={l} connectNulls/>)}</LineChart></ResponsiveContainer>
+          </GCard>
+          <GCard D={D}><SL D={D}>Measurement Comparison</SL>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}><thead><tr><th style={{textAlign:"left",color:D.ts,padding:"5px 0",fontWeight:500,minWidth:80}}>Metric</th>{measurements.map(m=><th key={m.date} style={{textAlign:"right",color:D.acc,padding:"5px 6px",fontWeight:600,fontSize:10}}>{m.date}</th>)}<th style={{textAlign:"right",color:D.g,fontWeight:700,fontSize:10}}>Lost</th></tr></thead>
+            <tbody>{mParts.map(([label,key,c])=>{const d=measurements[0][key]&&measurements[measurements.length-1][key]?+(measurements[0][key]-measurements[measurements.length-1][key]).toFixed(1):null;return <tr key={key} style={{borderTop:`1px solid ${D.brd}`}}><td style={{padding:"9px 0",color:D.ts,whiteSpace:"nowrap"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:c,marginRight:6}}/>{label}</td>{measurements.map((m,i)=><td key={i} style={{textAlign:"right",padding:"9px 6px",color:i===measurements.length-1?D.t:D.ts}}>{m[key]??'—'}</td>)}<td style={{textAlign:"right",color:d&&d>0?D.g:D.r,fontWeight:700}}>{d?d>0?`↓${d}`:`↑${Math.abs(d)}`:"—"}</td></tr>;})}</tbody></table>
+          </GCard>
+        </>
+      )}
     </>}
     {bodyTab==="bf"&&<>
       <GCard D={D} glowColor={bf?`${bfCat[1]}25`:"none"} style={{marginBottom:12,textAlign:"center",padding:28}}>
@@ -1383,9 +1372,9 @@ function BodyScreen({D}) {
     {bodyTab==="photos"&&<>
       <GCard D={D} style={{marginBottom:12}}><SL D={D}>Before Vs After — Choose Dates</SL>
         <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",gap:8,alignItems:"center",marginBottom:14}}>
-          <div><div style={{fontSize:9,color:D.ts,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>Before</div><select style={{width:"100%",padding:"8px",borderRadius:8,border:`1.5px solid ${D.inpBrd}`,background:D.inp,color:D.t,fontSize:12,outline:"none"}}>{dateLabels.map((l,i)=><option key={i} value={i}>{l}</option>)}</select></div>
+          <div><div style={{fontSize:9,color:D.ts,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>Before</div><select style={{width:"100%",padding:"8px",borderRadius:8,border:`1.5px solid ${D.inpBrd}`,background:D.inp,color:D.t,fontSize:12,outline:"none"}}>{dateLabels.length>0 ? dateLabels.map((l,i)=><option key={i} value={i}>{l}</option>) : <option value="">No dates yet</option>}</select></div>
           <div style={{color:D.tm,fontWeight:700,fontSize:16}}>vs</div>
-          <div><div style={{fontSize:9,color:D.g,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>After</div><select defaultValue={MEAS.length-1} style={{width:"100%",padding:"8px",borderRadius:8,border:`1.5px solid ${D.inpBrd}`,background:D.inp,color:D.t,fontSize:12,outline:"none"}}>{dateLabels.map((l,i)=><option key={i} value={i}>{l}</option>)}</select></div>
+          <div><div style={{fontSize:9,color:D.g,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>After</div><select defaultValue={Math.max(0, dateLabels.length-1)} style={{width:"100%",padding:"8px",borderRadius:8,border:`1.5px solid ${D.inpBrd}`,background:D.inp,color:D.t,fontSize:12,outline:"none"}}>{dateLabels.length>0 ? dateLabels.map((l,i)=><option key={i} value={i}>{l}</option>) : <option value="">No dates yet</option>}</select></div>
         </div>
         <div ref={containerRef} onMouseMove={e=>{if(e.buttons===1)handleDrag(e)}} onMouseDown={handleDrag} onTouchStart={handleDrag} onTouchMove={handleDrag} style={{position:"relative",userSelect:"none",borderRadius:12,overflow:"hidden",height:280,cursor:"ew-resize",background:D.c2}}>
           <div style={{position:"absolute",inset:0,background:D.dark?"linear-gradient(160deg,#0a1e34,#0f2a4a)":"linear-gradient(160deg,#e0ebff,#c8d9ff)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
@@ -1407,9 +1396,10 @@ function BodyScreen({D}) {
   </div>;
 }
 
-function WinsScreen({D, clientProfile}) {
+function WinsScreen({D, clientProfile, data}) {
   const [text,setText]=useState(""); const [wins,setWins]=useState([]);
-  const curWeek = clientProfile?.week || 1;
+  const dayCount = (data?.length || 0) + 1;
+  const curWeek = Math.max(1, Math.ceil(dayCount / 7));
   return <div style={{padding:"16px 14px 24px"}}>
     <div style={{marginBottom:16}}><div style={{fontSize:9.5,color:D.am,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Weekly Reflection</div><div style={{fontSize:21,fontWeight:900,color:D.t}}>Your Wins</div></div>
     <GCard D={D} glowColor={D.amG} style={{marginBottom:16}}><SL D={D} color={D.am}>This Week — Week {curWeek}</SL>
@@ -1444,7 +1434,8 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
   const phaseStr = clientProfile?.phase || "Phase I: Rebuild";
   const phaseWeeks = clientProfile?.phaseWeeks || 12;
   const startW = clientProfile?.startW || (data?.[0]?.weight || 70.0);
-  const curWeek = clientProfile?.week || Math.max(1, Math.ceil(Math.max(1, data.length) / 7));
+  const dayCount = (data?.length || 0) + 1;
+  const curWeek = Math.max(1, Math.ceil(dayCount / 7));
 
   const parseProfileDate = (dateStr) => {
     if (!dateStr) return new Date();
@@ -1779,63 +1770,30 @@ function OnboardingScreen({D,onComplete}) {
 
   const [createdAccount, setCreatedAccount] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [copied, setCopied] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
   const submit = async () => {
     setSubmitting(true);
+    setSubmitError("");
     const email = (form.email || "").trim().toLowerCase();
-    // Clean, robust 12-char password
-    const generatedPass = "Lf#" + Math.random().toString(36).slice(-6) + "!9";
-    let firebaseUid = null;
-
-    // 1. Direct Firebase Auth registration via Client SDK (guarantees user exists in Firebase Auth)
-    if (email) {
-      try {
-        const authRes = await registerWithEmail(email, generatedPass);
-        if (authRes.user) {
-          firebaseUid = authRes.user.uid;
-        } else if (authRes.code === "auth/email-already-in-use") {
-          console.log("Email already in Firebase Auth, proceeding to sync profile.");
-        }
-      } catch (authErr) {
-        console.warn("Client Firebase Auth notice:", authErr.message);
-      }
-    }
 
     try {
       const res = await registerOnboarding({
         ...form,
-        email,
-        password: generatedPass,
-        uid: firebaseUid
+        email
       });
-      if (res && res.account) {
-        setCreatedAccount({ ...res.account, password: res.account.password || generatedPass });
-      } else if (res && res.password) {
+      if (res && res.password) {
         setCreatedAccount(res);
+      } else if (res && res.account) {
+        setCreatedAccount(res.account);
       } else {
-        setCreatedAccount({
-          name: form.name || "New Client",
-          email: email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
-          password: generatedPass,
-          startW: form.weight || 70,
-          weightUnit: form.weightUnit || "kg",
-          measUnit: form.measUnit || "cm",
-          clientId: (form.name || "client").toLowerCase().replace(/\s+/g, '')
-        });
+        throw new Error("Invalid response from registration service.");
       }
     } catch (err) {
-      console.warn("Backend onboarding sync notice:", err.message);
-      setCreatedAccount({
-        name: form.name || "New Client",
-        email: email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
-        password: generatedPass,
-        startW: form.weight || 70,
-        weightUnit: form.weightUnit || "kg",
-        measUnit: form.measUnit || "cm",
-        clientId: (form.name || "client").toLowerCase().replace(/\s+/g, '')
-      });
+      console.warn("Backend onboarding sync error:", err.message);
+      setSubmitError(err.message || "Registration failed. An account with this email may already exist.");
     } finally {
       setSubmitting(false);
     }
@@ -2008,7 +1966,7 @@ function OnboardingScreen({D,onComplete}) {
       {step===0 && <>
         <GCard D={D} style={{marginBottom:12}}>
           <SL D={D}>Full Name *</SL>
-          <Ti D={D} value={form.name} onChange={v=>F("name",v)} placeholder="e.g. Ankit Mehta"/>
+          <Ti D={D} value={form.name} onChange={v=>F("name",v)} placeholder="e.g. Rahul Sharma"/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
           <SL D={D}>Age *</SL>
@@ -2024,7 +1982,7 @@ function OnboardingScreen({D,onComplete}) {
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
           <SL D={D}>Email *</SL>
-          <Ti D={D} type="email" value={form.email} onChange={v=>F("email",v)} placeholder="e.g. ankit@email.com"/>
+          <Ti D={D} type="email" value={form.email} onChange={v=>F("email",v)} placeholder="e.g. rahul@email.com"/>
           {form.email&&!form.email.includes("@")&&<div style={{fontSize:10,color:D.r,marginTop:5}}>Please enter a valid email with @</div>}
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
@@ -2246,11 +2204,18 @@ function OnboardingScreen({D,onComplete}) {
       </>}
     </div>
 
-    <div style={{padding:"0 20px 24px",display:"flex",gap:10,flexShrink:0}}>
-      {step>0 && <button onClick={()=>setStep(s=>s-1)} style={{flex:1,padding:15,background:"transparent",border:`1.5px solid ${D.brd}`,borderRadius:14,fontSize:14,fontWeight:700,color:D.ts,cursor:"pointer"}}>Back</button>}
-      {step<steps.length-1
-        ? <button onClick={()=>canNext&&setStep(s=>s+1)} disabled={!canNext} style={{flex:2,padding:15,background:canNext?D.acc:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:"white",cursor:canNext?"pointer":"not-allowed",opacity:canNext?1:0.6}}>Continue</button>
-        : <button onClick={submit} disabled={!canNext || submitting} style={{flex:2,padding:15,background:canNext&&!submitting?D.g:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:canNext&&!submitting?"#0d1b3e":D.tm,cursor:canNext&&!submitting?"pointer":"not-allowed",boxShadow:canNext&&!submitting?`0 0 20px ${D.gG}`:"none"}}>{submitting ? "Creating Account..." : "Finish & Enter Portal →"}</button>}
+    <div style={{padding:"0 20px 24px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
+      {submitError && (
+        <div style={{background:D.rG,border:`1px solid ${D.r}`,borderRadius:12,padding:"10px 14px",color:D.r,fontSize:12,fontWeight:600,textAlign:"center"}}>
+          {submitError}
+        </div>
+      )}
+      <div style={{display:"flex",gap:10}}>
+        {step>0 && <button onClick={()=>setStep(s=>s-1)} style={{flex:1,padding:15,background:"transparent",border:`1.5px solid ${D.brd}`,borderRadius:14,fontSize:14,fontWeight:700,color:D.ts,cursor:"pointer"}}>Back</button>}
+        {step<steps.length-1
+          ? <button onClick={()=>canNext&&setStep(s=>s+1)} disabled={!canNext} style={{flex:2,padding:15,background:canNext?D.acc:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:"white",cursor:canNext?"pointer":"not-allowed",opacity:canNext?1:0.6}}>Continue</button>
+          : <button onClick={submit} disabled={!canNext || submitting} style={{flex:2,padding:15,background:canNext&&!submitting?D.g:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:canNext&&!submitting?"#0d1b3e":D.tm,cursor:canNext&&!submitting?"pointer":"not-allowed",boxShadow:canNext&&!submitting?`0 0 20px ${D.gG}`:"none"}}>{submitting ? "Creating Account..." : "Finish & Enter Portal →"}</button>}
+      </div>
     </div>
   </div>;
 }
@@ -2273,14 +2238,12 @@ function LoginScreen({D,onPortal,onCoach}) {
     } else {
       let isCoach = false;
       try {
-        if (token) {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          isCoach = payload.role === "coach";
-        }
+        const me = await fetchMe();
+        isCoach = me.role === "coach";
       } catch {
         isCoach = (email.toLowerCase().trim() === "ram@leanfit.io");
       }
-      if (isCoach || email.toLowerCase().trim() === "ram@leanfit.io") {
+      if (isCoach) {
         onCoach();
       } else {
         onPortal(user, email);
@@ -2366,6 +2329,7 @@ export default function App() {
   const [stage,setStage]=useState("login");
   const [tab,setTab]=useState("checkin");
   const [data,setData]=useState([]);
+  const [measurements,setMeasurements]=useState([]);
   const [weightUnit,setWeightUnit]=useState(null);
   const [measUnit,setMeasUnit]=useState("cm"); // locked from onboarding
   const [onboardingData,setOnboardingData]=useState(null);
@@ -2378,8 +2342,6 @@ export default function App() {
       phase: "Phase I: Rebuild",
       startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
       startW: 70.0,
-      week: 1,
-      dayNo: 1,
       height: 175,
       prog: "LeanFit 6-Month Transformation",
       phaseWeeks: 12,
@@ -2405,6 +2367,9 @@ export default function App() {
       const res = await fetchClientData();
       if (res.checkins) {
         setData(res.checkins);
+      }
+      if (res.measurements) {
+        setMeasurements(res.measurements);
       }
       if (res.plans) {
         setPlans({
@@ -2435,6 +2400,22 @@ export default function App() {
           email: user.email
         }));
         loadData(user.email);
+      } else {
+        setData([]);
+        setMeasurements([]);
+        setOnboardingData(null);
+        setPlans({ nutrition: null, workout: null });
+        setClientProfile({
+          name: "",
+          phase: "Phase I: Rebuild",
+          startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+          startW: 70.0,
+          height: 175,
+          prog: "LeanFit 6-Month Transformation",
+          phaseWeeks: 12,
+          coachStepsGoal: 8000
+        });
+        setStage("login");
       }
     });
     return () => unsubscribe();
@@ -2454,7 +2435,7 @@ export default function App() {
 
   // Dynamic notification schedule:
   const dayCount = data.length + 1;
-  const curWeek = clientProfile.week || Math.max(1, Math.ceil(dayCount / 7));
+  const curWeek = Math.max(1, Math.ceil(dayCount / 7));
   const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
   const isMeasDay = daysUntilMeas === 0;
   const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
@@ -2487,8 +2468,6 @@ export default function App() {
         height: acc.height || f.height,
         weightUnit: acc.weightUnit || f.weightUnit || "kg",
         measUnit: acc.measUnit || f.measUnit || "cm",
-        dayNo: 1,
-        week: 1,
         phase: "Phase I: Rebuild",
         phaseWeeks: 12,
         startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
@@ -2530,8 +2509,8 @@ export default function App() {
       <div style={{flex:1,overflowY:"auto"}}>
         {tab==="checkin"   && <CheckIn   D={D} data={data} setData={setData} onComplete={()=>setTab("dashboard")} weightUnit={weightUnit} setWeightUnit={setWeightUnit} measUnit={measUnit} clientProfile={clientProfile}/>}
         {tab==="dashboard" && <Dashboard D={D} data={data} weightUnit={weightUnit} clientProfile={clientProfile}/>}
-        {tab==="body"      && <BodyScreen D={D}/>}
-        {tab==="wins"      && <WinsScreen D={D} clientProfile={clientProfile}/>}
+        {tab==="body"      && <BodyScreen D={D} measurements={measurements} clientProfile={clientProfile}/>}
+        {tab==="wins"      && <WinsScreen D={D} clientProfile={clientProfile} data={data}/>}
         {tab==="me"        && <MeScreen   D={D} theme={theme} toggleTheme={toggle} weightUnit={weightUnit} setWeightUnit={setWeightUnit} data={data} onboardingData={onboardingData} setOnboardingData={setOnboardingData} plans={plans} clientProfile={clientProfile}/>}
       </div>
       <BottomNav D={D} tab={tab} setTab={setTab}/>

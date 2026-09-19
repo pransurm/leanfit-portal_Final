@@ -16,6 +16,17 @@ except Exception:
 
 from api.database import get_db
 
+def generate_tough_password(length: int = 14) -> str:
+    """Generate a cryptographically secure random password with mixed charsets."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    while True:
+        password = ''.join(secrets.choice(alphabet) for _ in range(length))
+        if (any(c.islower() for c in password)
+                and any(c.isupper() for c in password)
+                and any(c.isdigit() for c in password)
+                and any(c in "!@#$%^&*" for c in password)):
+            return password
+
 def create_or_update_client(
     name: str,
     email: str,
@@ -159,19 +170,5 @@ if __name__ == "__main__":
         cli_name = sys.argv[3].strip() if len(sys.argv) > 3 else cli_email.split("@")[0].capitalize()
         create_or_update_client(name=cli_name, email=cli_email, password=cli_password)
     else:
-        # Default: provision/update both Pranshur and Adesh with Password@1234
-        print("Provisioning default clients (Pranshur and Adesh)...")
-        create_or_update_client(
-            name="Pranshur Mishra",
-            email="pransurm@gmail.com",
-            password="Password@1234",
-            start_w=70.0,
-            client_id="pranshur"
-        )
-        create_or_update_client(
-            name="Adesh",
-            email="adesh@leanfit.io",
-            password="Password@1234",
-            start_w=94.0,
-            client_id="adesh"
-        )
+        print("Usage: python3 api/create_client.py <email> <password> [name]")
+        print("Example: python3 api/create_client.py client@example.com MyPass123 'Jane Doe'")

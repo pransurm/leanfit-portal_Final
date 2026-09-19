@@ -6,6 +6,11 @@ from datetime import datetime
 # Allow running as script directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from api.config import settings
+
+if settings.ENVIRONMENT != "development":
+    raise SystemExit("seed.py refuses to run outside ENVIRONMENT=development")
+
 from api.database import get_db
 from api.calculations import calc_adherence, calc_streak, classify_traffic_light, calc_body_fat
 

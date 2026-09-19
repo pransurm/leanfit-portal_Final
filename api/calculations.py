@@ -3,15 +3,19 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 
 def parse_date_dmy(date_str: str) -> Optional[date]:
-    """Parse DD-MM-YYYY format into date object. Falls back to YYYY-MM-DD if needed."""
+    """Parse DD-MM-YYYY format into date object with multiple fallback formats and ISO 8601 support."""
     if not date_str:
         return None
-    for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
+    cleaned = str(date_str).strip()
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d %b %Y", "%d %B %Y"):
         try:
-            return datetime.strptime(date_str.strip(), fmt).date()
+            return datetime.strptime(cleaned, fmt).date()
         except ValueError:
             continue
-    return None
+    try:  # ISO 8601 with time component, e.g. "2026-09-08T00:00:00Z"
+        return datetime.fromisoformat(cleaned.replace("Z", "+00:00")).date()
+    except (ValueError, AttributeError):
+        return None
 
 def format_date_dmy(d: date) -> str:
     """Format date to standardized DD-MM-YYYY."""

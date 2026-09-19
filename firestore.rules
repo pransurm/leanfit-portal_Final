@@ -17,7 +17,7 @@ service cloud.firestore {
     // Users collection
     match /users/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isCoach());
-      allow write: if isCoach() || (isAuthenticated() && request.auth.uid == userId);
+      allow write: if false;
     }
 
     // Clients collection & subcollections

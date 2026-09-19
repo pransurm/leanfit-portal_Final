@@ -68,18 +68,18 @@ def client_with_mock_db(monkeypatch):
     mock_db = MockFirestore()
 
     # Preload mock clients
-    mock_db.store["clients/ankit"] = {
-        "name": "Ankit",
-        "email": "ankit@leanfit.io",
+    mock_db.store["clients/client_a"] = {
+        "name": "Client A",
+        "email": "client_a@leanfit.io",
         "phase": "Phase I",
         "week": 2,
         "coachStepsGoal": 8000,
         "coachNote": "CONFIDENTIAL: Client is recovering from knee strain. Ram only.",
         "status": "active"
     }
-    mock_db.store["clients/srikanth"] = {
-        "name": "Srikanth",
-        "email": "srikanth@leanfit.io",
+    mock_db.store["clients/client_b"] = {
+        "name": "Client B",
+        "email": "client_b@leanfit.io",
         "phase": "Phase I",
         "week": 3,
         "coachStepsGoal": 10000,
@@ -132,27 +132,27 @@ def test_production_auth_rejects_invalid_bearer(client_with_mock_db, monkeypatch
 
 # ═══ 2. CLIENT DATA ISOLATION & ACCESS CONTROL ══════════════════════════
 def test_client_only_receives_own_data(client_with_mock_db):
-    """Client Ankit can only read their own document and checkins."""
+    """Client can only read their own document and checkins."""
     client, _ = client_with_mock_db
 
-    # Authenticate as Ankit
+    # Authenticate as Client A
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
     response = client.get("/api/client/data")
     assert response.status_code == 200
     data = response.json()
-    assert data["client"]["name"] == "Ankit"
-    assert data["client"]["id"] == "ankit"
+    assert data["client"]["name"] == "Client A"
+    assert data["client"]["id"] == "client_a"
 
 def test_client_cannot_access_coach_roster(client_with_mock_db):
-    """Client Ankit trying to access coach roster is rejected with 403 Forbidden."""
+    """Client trying to access coach roster is rejected with 403 Forbidden."""
     client, _ = client_with_mock_db
 
     # Authenticate as client
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
     response = client.get("/api/coach/roster")
@@ -160,15 +160,15 @@ def test_client_cannot_access_coach_roster(client_with_mock_db):
     assert response.json()["detail"] == "Coach access required"
 
 def test_client_cannot_access_coach_client_deep_dive(client_with_mock_db):
-    """Client Ankit trying to access another client's file via coach endpoint gets 403."""
+    """Client trying to access another client's file via coach endpoint gets 403."""
     client, _ = client_with_mock_db
 
     # Authenticate as client
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
-    response = client.get("/api/coach/client/srikanth")
+    response = client.get("/api/coach/client/client_b")
     assert response.status_code == 403
     assert response.json()["detail"] == "Coach access required"
 
@@ -178,9 +178,9 @@ def test_coach_note_never_leaks_to_client(client_with_mock_db):
     """When a client fetches their data, coachNote is strictly stripped from the response."""
     client, _ = client_with_mock_db
 
-    # Authenticate as client Ankit
+    # Authenticate as client Client A
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
     response = client.get("/api/client/data")
@@ -198,7 +198,7 @@ def test_coach_can_read_coach_note(client_with_mock_db):
         uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
     )
 
-    response = client.get("/api/coach/client/ankit")
+    response = client.get("/api/coach/client/client_a")
     assert response.status_code == 200
     client_payload = response.json()["client"]
     assert "coachNote" in client_payload
@@ -211,7 +211,7 @@ def test_checkin_submission_and_idempotency(client_with_mock_db):
     client, mock_db = client_with_mock_db
 
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
     payload = {
@@ -235,21 +235,21 @@ def test_checkin_submission_and_idempotency(client_with_mock_db):
     assert res1.json()["checkin"]["fullDate"] == "08-09-2026"
     assert res1.json()["adherence"]["overall"] == 100
 
-    # Verify stored in Firestore at clients/ankit/checkins/08-09-2026
-    assert "clients/ankit/checkins/08-09-2026" in mock_db.store
+    # Verify stored in Firestore at clients/client_a/checkins/08-09-2026
+    assert "clients/client_a/checkins/08-09-2026" in mock_db.store
 
     # Duplicate submission on same day should update idempotently
     payload["steps"] = 9000
     res2 = client.post("/api/client/checkin", json=payload)
     assert res2.status_code == 200
-    assert mock_db.store["clients/ankit/checkins/08-09-2026"]["steps"] == 9000
+    assert mock_db.store["clients/client_a/checkins/08-09-2026"]["steps"] == 9000
 
 def test_invalid_date_format_rejected(client_with_mock_db):
     """Submissions with invalid date format are rejected with 400 Bad Request."""
     client, _ = client_with_mock_db
 
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
     bad_payload = {
@@ -274,27 +274,27 @@ def test_invalid_date_format_rejected(client_with_mock_db):
 def test_client_cannot_delete_checkin(client_with_mock_db):
     """Clients attempting to call DELETE /api/coach/client/{id}/checkin/{id} are rejected with 403."""
     client, mock_db = client_with_mock_db
-    mock_db.store["clients/ankit/checkins/08-09-2026"] = {"fullDate": "08-09-2026", "w": 67.5}
+    mock_db.store["clients/client_a/checkins/08-09-2026"] = {"fullDate": "08-09-2026", "w": 67.5}
 
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
 
-    res = client.request("DELETE", "/api/coach/client/ankit/checkin/08-09-2026", json={"reason": "Wrong weight"})
+    res = client.request("DELETE", "/api/coach/client/client_a/checkin/08-09-2026", json={"reason": "Wrong weight"})
     assert res.status_code == 403
     assert res.json()["detail"] == "Coach access required"
 
 def test_coach_delete_requires_reason(client_with_mock_db):
     """Coach cannot delete a checkin without providing a non-empty reason string."""
     client, mock_db = client_with_mock_db
-    mock_db.store["clients/ankit/checkins/08-09-2026"] = {"fullDate": "08-09-2026", "w": 67.5}
+    mock_db.store["clients/client_a/checkins/08-09-2026"] = {"fullDate": "08-09-2026", "w": 67.5}
 
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
     )
 
     # Empty reason
-    res = client.request("DELETE", "/api/coach/client/ankit/checkin/08-09-2026", json={"reason": "   "})
+    res = client.request("DELETE", "/api/coach/client/client_a/checkin/08-09-2026", json={"reason": "   "})
     assert res.status_code == 400
     assert "Deletion reason is required" in res.json()["detail"]
 
@@ -302,14 +302,14 @@ def test_coach_successful_soft_delete_and_audit_log(client_with_mock_db):
     """Coach soft deletes check-in: marks document deleted, logs to audit_logs, recalculates parent fields, and excludes from client data."""
     client, mock_db = client_with_mock_db
 
-    # Setup Ankit with 2 checkins: 01-09-2026 (68.0 kg) and 02-09-2026 (incorrect 85.0 kg)
-    mock_db.store["clients/ankit/checkins/01-09-2026"] = {
+    # Setup Client A with 2 checkins: 01-09-2026 (68.0 kg) and 02-09-2026 (incorrect 85.0 kg)
+    mock_db.store["clients/client_a/checkins/01-09-2026"] = {
         "fullDate": "01-09-2026", "w": 68.0, "meals": 5, "steps": 8000, "water": 3.0, "e": 8, "sl": 7, "st": 3
     }
-    mock_db.store["clients/ankit/checkins/02-09-2026"] = {
+    mock_db.store["clients/client_a/checkins/02-09-2026"] = {
         "fullDate": "02-09-2026", "w": 85.0, "meals": 5, "steps": 8000, "water": 3.0, "e": 8, "sl": 7, "st": 3
     }
-    mock_db.store["clients/ankit"]["latestW"] = 85.0
+    mock_db.store["clients/client_a"]["latestW"] = 85.0
 
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
@@ -318,7 +318,7 @@ def test_coach_successful_soft_delete_and_audit_log(client_with_mock_db):
     delete_reason = "Client scale malfunction recorded 85kg instead of 67.8kg"
     res = client.request(
         "DELETE",
-        "/api/coach/client/ankit/checkin/02-09-2026",
+        "/api/coach/client/client_a/checkin/02-09-2026",
         json={"reason": delete_reason}
     )
     assert res.status_code == 200
@@ -330,14 +330,14 @@ def test_coach_successful_soft_delete_and_audit_log(client_with_mock_db):
     assert res_data["latestW"] == 68.0
 
     # 1. Verify checkin is marked deleted in store, NOT purged (soft delete)
-    checkin_in_db = mock_db.store["clients/ankit/checkins/02-09-2026"]
+    checkin_in_db = mock_db.store["clients/client_a/checkins/02-09-2026"]
     assert checkin_in_db["deleted"] is True
     assert checkin_in_db["deletedBy"] == "ram@leanfit.io"
     assert checkin_in_db["deletionReason"] == delete_reason
     assert "deletedAt" in checkin_in_db
 
-    # 2. Verify audit log was created under clients/ankit/audit_logs/
-    audit_logs = [v for k, v in mock_db.store.items() if k.startswith("clients/ankit/audit_logs/")]
+    # 2. Verify audit log was created under clients/client_a/audit_logs/
+    audit_logs = [v for k, v in mock_db.store.items() if k.startswith("clients/client_a/audit_logs/")]
     assert len(audit_logs) == 1
     log = audit_logs[0]
     assert log["action"] == "CHECKIN_SOFT_DELETED"
@@ -347,11 +347,11 @@ def test_coach_successful_soft_delete_and_audit_log(client_with_mock_db):
     assert "photoRetentionPolicy" in log
 
     # 3. Verify parent client document latestW recomputed to remaining active checkin (68.0 kg)
-    assert mock_db.store["clients/ankit"]["latestW"] == 68.0
+    assert mock_db.store["clients/client_a"]["latestW"] == 68.0
 
     # 4. Verify client calling GET /api/client/data does NOT see deleted checkin
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        uid="ankit_uid", email="ankit@leanfit.io", role="client", client_id="ankit"
+        uid="client_a_uid", email="client_a@leanfit.io", role="client", client_id="client_a"
     )
     client_res = client.get("/api/client/data")
     assert client_res.status_code == 200
@@ -373,7 +373,7 @@ def test_mid_sequence_deletion_breaks_streak(client_with_mock_db):
 
     # 3 consecutive days: t2, t1, t0
     for d in [d0, d1, d2]:
-        mock_db.store[f"clients/ankit/checkins/{d}"] = {
+        mock_db.store[f"clients/client_a/checkins/{d}"] = {
             "fullDate": d, "w": 68.0, "meals": 5, "steps": 8000, "water": 3.0, "e": 8, "sl": 7, "st": 3
         }
 
@@ -384,7 +384,7 @@ def test_mid_sequence_deletion_breaks_streak(client_with_mock_db):
     # Delete the middle check-in d1 (yesterday)
     res = client.request(
         "DELETE",
-        f"/api/coach/client/ankit/checkin/{d1}",
+        f"/api/coach/client/client_a/checkin/{d1}",
         json={"reason": "Incorrect data entered for yesterday"}
     )
     assert res.status_code == 200
@@ -394,5 +394,5 @@ def test_mid_sequence_deletion_breaks_streak(client_with_mock_db):
     assert res_data["remainingActiveCheckins"] == 2
     # Because d1 is deleted, the streak from today encounters a gap at yesterday, so streak MUST be 1, NOT 2!
     assert res_data["streak"] == 1
-    assert mock_db.store["clients/ankit"]["streak"] == 1
+    assert mock_db.store["clients/client_a"]["streak"] == 1
 

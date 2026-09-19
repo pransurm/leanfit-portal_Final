@@ -17,8 +17,25 @@ class TestCalculations(unittest.TestCase):
         formatted = format_date_dmy(d)
         self.assertEqual(formatted, "08-09-2026")
 
-        parsed = parse_date_dmy("08-09-2026")
-        self.assertEqual(parsed, d)
+        # Standard DD-MM-YYYY
+        self.assertEqual(parse_date_dmy("08-09-2026"), d)
+        # YYYY-MM-DD
+        self.assertEqual(parse_date_dmy("2026-09-08"), d)
+        # DD/MM/YYYY
+        self.assertEqual(parse_date_dmy("08/09/2026"), d)
+        # YYYY/MM/DD
+        self.assertEqual(parse_date_dmy("2026/09/08"), d)
+        # DD Mon YYYY
+        self.assertEqual(parse_date_dmy("08 Sep 2026"), d)
+        # DD Month YYYY
+        self.assertEqual(parse_date_dmy("08 September 2026"), d)
+        # ISO 8601 with Z time component
+        self.assertEqual(parse_date_dmy("2026-09-08T00:00:00Z"), d)
+        # ISO 8601 with timezone offset
+        self.assertEqual(parse_date_dmy("2026-09-08T15:30:00+05:30"), d)
+        # Invalid returns None
+        self.assertIsNone(parse_date_dmy("invalid-date"))
+        self.assertIsNone(parse_date_dmy(""))
 
     def test_adherence_calculation(self):
         # 7 perfect checkins

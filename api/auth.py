@@ -37,25 +37,41 @@ async def get_current_user(
         token = authorization.split("Bearer ", 1)[1].strip()
         try:
             from firebase_admin import auth as firebase_auth
-            decoded_token = firebase_auth.verify_id_token(token)
+            from firebase_admin import exceptions as firebase_exceptions
+            try:
+                decoded_token = firebase_auth.verify_id_token(token)
+            except (
+                ValueError,
+                firebase_auth.InvalidIdTokenError,
+                firebase_auth.ExpiredIdTokenError,
+                firebase_auth.RevokedIdTokenError,
+                firebase_auth.CertificateFetchError,
+                firebase_exceptions.FirebaseError
+            ) as auth_err:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid or expired Firebase ID token: {str(auth_err)}"
+                )
+
             uid = decoded_token.get("uid")
             email = decoded_token.get("email", "")
-            role = decoded_token.get("role", "client")
+            token_role = decoded_token.get("role", "client")
             client_id = decoded_token.get("clientId", uid)
 
             # Check users/{uid} document or fallback to email lookup
             db = get_db()
+            fs_role = "client"
             user_doc = db.collection("users").document(uid).get()
             if user_doc.exists:
                 u_data = user_doc.to_dict()
-                role = u_data.get("role", role)
+                fs_role = u_data.get("role", "client")
                 client_id = u_data.get("clientId", client_id)
             elif email:
                 # Fallback 1: lookup users collection by email
                 u_matches = list(db.collection("users").where("email", "==", email.lower()).limit(1).stream())
                 if u_matches:
                     u_data = u_matches[0].to_dict()
-                    role = u_data.get("role", role)
+                    fs_role = u_data.get("role", "client")
                     client_id = u_data.get("clientId", client_id)
                 else:
                     # Fallback 2: lookup clients collection by email
@@ -63,11 +79,15 @@ async def get_current_user(
                     if c_matches:
                         client_id = c_matches[0].id
 
+            # Privilege escalation protection: require BOTH token claim and Firestore document to be coach
+            role = "coach" if (token_role == "coach" and fs_role == "coach") else "client"
             return AuthenticatedUser(uid=uid, email=email, role=role, client_id=client_id)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid or expired Firebase ID token: {str(e)}"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Authentication service error: {str(e)}"
             )
 
     # 2. Local development fallback — strictly gated by settings.ENABLE_DEMO_AUTH
@@ -76,7 +96,10 @@ async def get_current_user(
             if x_demo_user.lower() in ("coach", "ram"):
                 return AuthenticatedUser(uid="coach_ram", email="ram@leanfit.io", role="coach", client_id="coach_ram")
             return AuthenticatedUser(uid=x_demo_user, email=f"{x_demo_user}@leanfit.io", role="client", client_id=x_demo_user)
-        return AuthenticatedUser(uid="ankit", email="ankit@leanfit.io", role="client", client_id="ankit")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Demo authentication enabled, but no X-Demo-User header was provided."
+        )
 
     # In production or whenever ENABLE_DEMO_AUTH is False:
     # HARD REJECTION: Demo headers are rejected, and missing Bearer token raises 401.

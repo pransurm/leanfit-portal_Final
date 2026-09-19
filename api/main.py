@@ -1,4 +1,6 @@
 import uuid
+import time
+from collections import defaultdict
 from datetime import datetime, date, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query, Body, Request
@@ -466,30 +468,57 @@ def save_onboarding(payload: Dict[str, Any] = Body(...), user: AuthenticatedUser
     return {"status": "ok"}
 
 
+_onboarding_rate_limits: Dict[str, List[float]] = defaultdict(list)
+ONBOARDING_MAX_REQUESTS = 5
+ONBOARDING_WINDOW_SECONDS = 600  # 10 minutes
+
+def _check_onboarding_rate_limit(request: Request):
+    """
+    In-memory per-IP rate limiter (speed bump / partial mitigation).
+    Limits to 5 requests per 10 minutes per IP.
+    """
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    now = time.time()
+    timestamps = [t for t in _onboarding_rate_limits[client_ip] if now - t < ONBOARDING_WINDOW_SECONDS]
+    if len(timestamps) >= ONBOARDING_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many onboarding requests from this IP. Please try again later."
+        )
+    timestamps.append(now)
+    _onboarding_rate_limits[client_ip] = timestamps
+
+
 @api_router.post("/public/onboarding/complete")
-def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
+def complete_public_onboarding(request: Request, payload: Dict[str, Any] = Body(...)):
     """
     Public intake registration endpoint:
-    - Generates tough password (14 chars)
-    - Provisions Firebase Auth user & claims
+    - Enforces per-IP rate limiting
+    - Generates tough password (14 chars) server-side
+    - Collision-proof client ID
+    - Synchronously provisions Firebase Auth user & claims (returns 409 if email exists)
     - Creates Firestore users/{uid} and clients/{clientId} with baseline metrics
-    - Creates Coach Ram notification with credentials
+    - Creates Coach Ram notification (without plaintext password)
     - Returns credentials & profile for on-screen display
     """
+    _check_onboarding_rate_limit(request)
+
     db = get_db()
     name = (payload.get("name") or "New Client").strip()
     email = (payload.get("email") or "").strip().lower()
 
-    clean_name = "".join(c for c in name.lower() if c.isalnum())
-    if not clean_name:
-        clean_name = f"client_{uuid.uuid4().hex[:6]}"
-    client_id = clean_name
+    clean_name = "".join(c for c in name.lower() if c.isalnum()) or "client"
+    client_id = f"{clean_name[:24]}_{uuid.uuid4().hex[:8]}"
     if not email:
         email = f"{client_id}@leanfit.io"
 
-    user_password = payload.get("password") or generate_tough_password(14)
-    passed_uid = payload.get("uid")
-    uid = passed_uid or client_id
+    # Server exclusively generates and owns password
+    user_password = generate_tough_password(14)
     weight_unit = payload.get("weightUnit", "kg")
     meas_unit = payload.get("measUnit", "cm")
 
@@ -517,46 +546,49 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
         height_cm = raw_h
         height_in = round(raw_h / 2.54, 1)
 
-    # 1. Firebase Auth user creation / claims sync
-    def try_firebase_auth():
-        nonlocal uid
+    # 1. Firebase Auth user creation / claims sync (synchronous, 409 on existing email)
+    uid = None
+    try:
+        from firebase_admin import auth as firebase_auth
+        user = None
         try:
-            from firebase_admin import auth as firebase_auth
+            user = firebase_auth.get_user_by_email(email)
+        except Exception:
             user = None
-            try:
-                user = firebase_auth.get_user_by_email(email)
-                uid = user.uid
-                firebase_auth.update_user(uid, password=user_password)
-                print(f"[AUTH OK] Updated existing Firebase user password for {email} (UID: {uid})", flush=True)
-            except Exception:
-                pass
 
-            if user is None:
-                try:
-                    create_args = {
-                        "email": email,
-                        "password": user_password,
-                        "display_name": name
-                    }
-                    if passed_uid:
-                        create_args["uid"] = passed_uid
-                    user = firebase_auth.create_user(**create_args)
-                    uid = user.uid
-                    print(f"[AUTH OK] Created new Firebase user for {email} (UID: {uid})", flush=True)
-                except Exception as e:
-                    print(f"[AUTH WARN] Could not create user in Firebase Admin: {e}", flush=True)
+        if user is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists."
+            )
 
-            try:
-                firebase_auth.set_custom_user_claims(uid, {"role": "client", "clientId": client_id})
-                print(f"[AUTH OK] Set custom claims for {uid}: role=client, clientId={client_id}", flush=True)
-            except Exception as e:
-                print(f"[AUTH WARN] Could not set custom claims: {e}", flush=True)
+        try:
+            new_user = firebase_auth.create_user(
+                email=email,
+                password=user_password,
+                display_name=name
+            )
+            uid = new_user.uid
+            firebase_auth.set_custom_user_claims(uid, {"role": "client", "clientId": client_id})
+            print(f"[AUTH OK] Created new Firebase user for {email} (UID: {uid}, ClientID: {client_id})", flush=True)
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"[AUTH WARN] Firebase Admin Auth error: {e}", flush=True)
+            if "email-already-exists" in str(e).lower() or "already exists" in str(e).lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email already exists."
+                )
+            print(f"[AUTH WARN] Could not create user in Firebase Admin: {e}", flush=True)
+            uid = client_id
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[AUTH WARN] Firebase Admin Auth error: {e}", flush=True)
+        uid = client_id
 
-    t = threading.Thread(target=try_firebase_auth, daemon=True)
-    t.start()
-    t.join(timeout=10.0)
+    if not uid:
+        uid = client_id
 
     # 2. Firestore: users/{uid}
     try:
@@ -621,19 +653,15 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
     except Exception:
         pass
 
-    # 4. Coach notification
+    # 4. Coach notification (NO plaintext credentials stored)
     try:
         notif_ref = db.collection("coach_notifications").document(f"notif_{client_id}")
         notif_ref.set({
             "id": f"notif_{client_id}",
             "type": "NEW_CLIENT_ADDED",
             "title": f"New Client Registered: {name}",
-            "body": f"{name} completed intake. Weight: {start_w} {weight_unit}. Email: {email}, Password: {tough_password}",
+            "body": f"{name} completed intake. Weight: {start_w} {weight_unit}. Email: {email}.",
             "clientId": client_id,
-            "credentials": {
-                "email": email,
-                "password": tough_password
-            },
             "read": False,
             "createdAt": datetime.now(timezone.utc).isoformat()
         }, merge=True)
@@ -644,7 +672,7 @@ def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
         "status": "ok",
         "clientId": client_id,
         "email": email,
-        "password": tough_password,
+        "password": user_password,
         "name": name,
         "startW": start_w,
         "startWLbs": start_w_lbs,
@@ -822,7 +850,7 @@ def update_client_status(client_id: str, payload: StatusUpdatePayload, user: Aut
         "updatedAt": datetime.now(timezone.utc).isoformat()
     }
     client_ref.set(updates, merge=True)
-    return {"status": "ok", "status": payload.status}
+    return {"status": "ok", "clientStatus": payload.status}
 
 
 @api_router.put("/coach/client/{client_id}/notes")
@@ -962,7 +990,8 @@ def delete_client_checkin(
 @api_router.post("/coach/client")
 def create_client_roster_entry(payload: ClientCreatePayload, user: AuthenticatedUser = Depends(require_coach)):
     db = get_db()
-    client_id = payload.name.lower().replace(" ", "_")
+    clean_name = "".join(c for c in payload.name.lower() if c.isalnum()) or "client"
+    client_id = f"{clean_name[:24]}_{uuid.uuid4().hex[:8]}"
     client_ref = db.collection("clients").document(client_id)
 
     data = {

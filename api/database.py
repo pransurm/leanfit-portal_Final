@@ -35,12 +35,22 @@ class MockDocRef:
         return MockCollectionRef(self.store, f"{self.path}/{name}")
 
 class MockCollectionRef:
-    def __init__(self, store, path):
+    def __init__(self, store, path, filters=None, limit_val=None):
         self.store = store
         self.path = path
+        self.filters = filters or []
+        self.limit_val = limit_val
 
     def document(self, doc_id):
         return MockDocRef(self.store, f"{self.path}/{doc_id}")
+
+    def where(self, field, op, val):
+        new_filters = list(self.filters)
+        new_filters.append((field, op, val))
+        return MockCollectionRef(self.store, self.path, filters=new_filters, limit_val=self.limit_val)
+
+    def limit(self, count):
+        return MockCollectionRef(self.store, self.path, filters=self.filters, limit_val=count)
 
     def stream(self):
         results = []
@@ -49,7 +59,16 @@ class MockCollectionRef:
             if key.startswith(prefix):
                 sub = key[len(prefix):]
                 if "/" not in sub:
-                    results.append(MockDocSnapshot(sub, val))
+                    matches = True
+                    if isinstance(val, dict):
+                        for f_field, f_op, f_val in self.filters:
+                            if f_op == "==" and val.get(f_field) != f_val:
+                                matches = False
+                                break
+                    if matches:
+                        results.append(MockDocSnapshot(sub, val))
+                        if self.limit_val and len(results) >= self.limit_val:
+                            break
         return results
 
 class MockFirestore:
@@ -72,7 +91,9 @@ def get_db():
                 except Exception:
                     _firebase_app = firebase_admin.initialize_app()
             _db = firestore.client()
-        except Exception:
+        except Exception as e:
+            if settings.ENVIRONMENT != "development":
+                raise RuntimeError(f"Failed to initialize Firestore client in production: {e}")
             # Fallback for environments where gRPC native DLL is blocked by OS policy (e.g. Windows WDAC)
             _db = MockFirestore()
     return _db
