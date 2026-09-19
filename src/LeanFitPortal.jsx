@@ -1439,7 +1439,7 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
   
   const clientName = (clientProfile?.name && clientProfile.name !== "Client") 
     ? clientProfile.name 
-    : (auth.currentUser?.displayName || (auth.currentUser?.email ? auth.currentUser.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Pranshur"));
+    : (auth.currentUser?.displayName || (auth.currentUser?.email ? auth.currentUser.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Client"));
   const clientProg = clientProfile?.prog || "LeanFit 6-Month Transformation";
   const phaseStr = clientProfile?.phase || "Phase I: Rebuild";
   const phaseWeeks = clientProfile?.phaseWeeks || 12;
@@ -2283,7 +2283,7 @@ function LoginScreen({D,onPortal,onCoach}) {
       if (isCoach || email.toLowerCase().trim() === "ram@leanfit.io") {
         onCoach();
       } else {
-        onPortal();
+        onPortal(user, email);
       }
     }
   };
@@ -2370,21 +2370,26 @@ export default function App() {
   const [measUnit,setMeasUnit]=useState("cm"); // locked from onboarding
   const [onboardingData,setOnboardingData]=useState(null);
   const [plans,setPlans]=useState({nutrition:null,workout:null});
-  const [clientProfile,setClientProfile]=useState({
-    name: "Pranshur",
-    phase: "Phase I: Rebuild",
-    startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
-    startW: 70.0,
-    week: 1,
-    dayNo: 1,
-    height: 175,
-    prog: "LeanFit 6-Month Transformation",
-    phaseWeeks: 12,
-    coachStepsGoal: 8000
+  const [clientProfile,setClientProfile]=useState(() => {
+    const user = auth.currentUser;
+    const name = user?.displayName || (user?.email ? user.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "");
+    return {
+      name: name || "",
+      phase: "Phase I: Rebuild",
+      startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+      startW: 70.0,
+      week: 1,
+      dayNo: 1,
+      height: 175,
+      prog: "LeanFit 6-Month Transformation",
+      phaseWeeks: 12,
+      coachStepsGoal: 8000
+    };
   });
   const D=THEMES[theme];
   const toggle=()=>setTheme(t=>t==="dark"?"light":"dark");
-  const headerLabel={checkin:`Morning, ${clientProfile.name}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
+  const displayName = clientProfile.name || auth.currentUser?.displayName || (auth.currentUser?.email ? auth.currentUser.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Client");
+  const headerLabel={checkin:`Morning, ${displayName}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
   const [showNotifs,setShowNotifs]=useState(false);
 
   useEffect(() => {
@@ -2395,7 +2400,7 @@ export default function App() {
     }
   }, []);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (emailHint) => {
     try {
       const res = await fetchClientData();
       if (res.checkins) {
@@ -2410,9 +2415,9 @@ export default function App() {
       if (res.client) {
         if (res.client.weightUnit) setWeightUnit(res.client.weightUnit);
         if (res.client.measUnit) setMeasUnit(res.client.measUnit);
-        const resolvedName = (res.client.name && res.client.name !== "Client")
-          ? res.client.name
-          : (auth.currentUser?.displayName || (auth.currentUser?.email ? auth.currentUser.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Pranshur"));
+        const currentEmail = emailHint || auth.currentUser?.email || "";
+        const fallbackName = currentEmail ? currentEmail.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Client";
+        const resolvedName = (res.client.name && res.client.name !== "Client") ? res.client.name : fallbackName;
         setClientProfile(p => ({ ...p, ...res.client, name: resolvedName }));
       }
     } catch (err) {
@@ -2423,15 +2428,28 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        loadData();
+        const derivedName = user.displayName || (user.email ? user.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Client");
+        setClientProfile(p => ({
+          ...p,
+          name: (p.name && p.name !== "Client") ? p.name : derivedName,
+          email: user.email
+        }));
+        loadData(user.email);
       }
     });
     return () => unsubscribe();
   }, [loadData]);
 
-  const handlePortalEnter = () => {
+  const handlePortalEnter = (user, loginEmail) => {
+    const currentEmail = loginEmail || user?.email || auth.currentUser?.email || "";
+    const derivedName = user?.displayName || (currentEmail ? currentEmail.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Client");
+    setClientProfile(p => ({
+      ...p,
+      name: derivedName,
+      email: currentEmail
+    }));
     setStage("portal");
-    loadData();
+    loadData(currentEmail);
   };
 
   // Dynamic notification schedule:

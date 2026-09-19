@@ -170,11 +170,11 @@ def get_client_data(user: AuthenticatedUser = Depends(get_current_user)):
                 pass
 
     if not client_doc.exists:
-        # Determine fallback name from user email or name
-        name = "Pranshur"
+        # Determine fallback name from user email or default to Client
+        name = "Client"
         if user.email:
             prefix = user.email.split("@")[0].replace(".", " ").replace("_", " ").title()
-            name = prefix or "Pranshur"
+            name = prefix or "Client"
         return {
             "client": {"id": client_id, "name": name, "phase": "Phase I", "week": 1, "coachStepsGoal": 8000},
             "checkins": [],
