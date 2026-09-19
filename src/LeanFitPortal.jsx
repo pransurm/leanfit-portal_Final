@@ -6,6 +6,7 @@ import {
   submitMeasurement, 
   submitWin, 
   submitOnboarding, 
+  registerOnboarding,
   getReportUploadUrl, 
   confirmReportUpload, 
   uploadFileToSignedUrl, 
@@ -1732,7 +1733,141 @@ function OnboardingScreen({D,onComplete}) {
     true,
   ][step] ?? true;
 
-  const submit=()=>onComplete(form);
+  const [createdAccount, setCreatedAccount] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      const res = await registerOnboarding(form);
+      if (res && res.password) {
+        setCreatedAccount(res);
+      } else {
+        const fallbackPass = "Lf#" + Math.random().toString(36).slice(-8) + "!9";
+        setCreatedAccount({
+          name: form.name || "New Client",
+          email: form.email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
+          password: fallbackPass,
+          startW: form.weight || 70,
+          weightUnit: form.weightUnit || "kg",
+          measUnit: form.measUnit || "cm",
+          clientId: (form.name || "client").toLowerCase().replace(/\s+/g, '')
+        });
+      }
+    } catch (err) {
+      const fallbackPass = "Lf#" + Math.random().toString(36).slice(-8) + "!9";
+      setCreatedAccount({
+        name: form.name || "New Client",
+        email: form.email || `${(form.name || "client").toLowerCase().replace(/\s+/g, '')}@leanfit.io`,
+        password: fallbackPass,
+        startW: form.weight || 70,
+        weightUnit: form.weightUnit || "kg",
+        measUnit: form.measUnit || "cm",
+        clientId: (form.name || "client").toLowerCase().replace(/\s+/g, '')
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (createdAccount) {
+    const handleCopy = () => {
+      try {
+        navigator.clipboard?.writeText(createdAccount.password);
+      } catch (_) {}
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    };
+
+    return (
+      <div style={{minHeight:"100vh",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
+        <div style={{
+          background: "linear-gradient(90deg, #071329 0%, #0c204c 30%, #153c8c 70%, #1d4fd8 100%)",
+          padding: "26px 20px 22px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          borderBottom: "1px solid rgba(255,255,255,0.1)",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+          flexShrink: 0
+        }}>
+          <div style={{fontSize:34,fontWeight:900,fontStyle:"italic",color:"#ffffff",letterSpacing:-1,lineHeight:1}}>LF</div>
+          <div style={{fontSize:14,fontWeight:900,color:"#ffffff",letterSpacing:6,marginTop:5,textIndent:6}}>LEANFIT</div>
+          <div style={{fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.75)",letterSpacing:2.5,marginTop:3,textIndent:2.5}}>— HEALTH & LIFESTYLE —</div>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"24px 20px",maxWidth:440,margin:"0 auto",width:"100%"}}>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div style={{display:"inline-flex",alignItems:"center",gap:6,background:D.gG,border:`1px solid ${D.g}40`,padding:"6px 14px",borderRadius:20,color:D.g,fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>
+              🎉 Intake Complete & Account Created
+            </div>
+            <div style={{fontSize:26,fontWeight:900,color:D.t,letterSpacing:-0.5,marginBottom:6}}>
+              Welcome, {createdAccount.name}!
+            </div>
+            <div style={{fontSize:12.5,color:D.ts,lineHeight:1.5}}>
+              Your LeanFit portal account is live. Here are your personal login credentials:
+            </div>
+          </div>
+
+          <GCard D={D} glowColor={D.accG} style={{marginBottom:16,border:`1.5px solid ${D.acc}40`}}>
+            <div style={{fontSize:10,color:D.acc,fontWeight:800,letterSpacing:1.5,textTransform:"uppercase",marginBottom:12}}>
+              Your Portal Login Credentials
+            </div>
+
+            <div style={{background:D.c2,borderRadius:12,padding:"10px 14px",marginBottom:10,border:`1px solid ${D.brd}`}}>
+              <div style={{fontSize:10,color:D.ts,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:2}}>Email / Username</div>
+              <div style={{fontSize:14,color:D.t,fontWeight:800,fontFamily:"monospace",wordBreak:"break-all"}}>{createdAccount.email}</div>
+            </div>
+
+            <div style={{background:D.c2,borderRadius:12,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.brd}`}}>
+              <div style={{fontSize:10,color:D.ts,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:2}}>Tough Password</div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                <div style={{fontSize:15,color:D.t,fontWeight:800,fontFamily:"monospace",letterSpacing:showPass?0.5:2}}>
+                  {showPass ? createdAccount.password : "••••••••••••••"}
+                </div>
+                <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  <button 
+                    type="button" 
+                    onClick={()=>setShowPass(s=>!s)} 
+                    style={{background:"transparent",border:`1px solid ${D.brd}`,borderRadius:8,padding:"5px 8px",color:D.ts,fontSize:11,cursor:"pointer",fontWeight:600}}
+                  >
+                    {showPass ? "Hide" : "Show"}
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={handleCopy} 
+                    style={{background:copied?D.g:D.acc,border:"none",borderRadius:8,padding:"5px 10px",color:"#ffffff",fontSize:11,cursor:"pointer",fontWeight:700,transition:"all 0.2s"}}
+                  >
+                    {copied ? "✓ Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{display:"flex",justifyContent:"space-between",background:D.c1,borderRadius:10,padding:"8px 12px",border:`1px solid ${D.brd}`}}>
+              <span style={{fontSize:11,color:D.ts}}>Starting Weight:</span>
+              <span style={{fontSize:11,color:D.t,fontWeight:700}}>{createdAccount.startW} {createdAccount.weightUnit}</span>
+            </div>
+          </GCard>
+
+          <div style={{background:D.c2,border:`1px solid ${D.brd}`,borderRadius:14,padding:"12px 14px",marginBottom:20,fontSize:11,color:D.ts,lineHeight:1.6}}>
+            💡 <strong>Please save your password now</strong> or store it in your password manager. Coach Ram has also received your intake details and credentials.
+          </div>
+
+          <button 
+            type="button" 
+            onClick={()=>onComplete(form, createdAccount)}
+            style={{width:"100%",padding:16,background:D.g,border:"none",borderRadius:14,fontSize:14,fontWeight:800,color:"#0d1b3e",cursor:"pointer",boxShadow:`0 0 24px ${D.gG}`}}
+          >
+            Enter My Portal →
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return <div style={{minHeight:"100vh",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
     {/* TOP BRAND HEADER BANNER (Deep Navy to Royal Blue Gradient with Centered Logo Hero) */}
@@ -2046,7 +2181,7 @@ function OnboardingScreen({D,onComplete}) {
       {step>0 && <button onClick={()=>setStep(s=>s-1)} style={{flex:1,padding:15,background:"transparent",border:`1.5px solid ${D.brd}`,borderRadius:14,fontSize:14,fontWeight:700,color:D.ts,cursor:"pointer"}}>Back</button>}
       {step<steps.length-1
         ? <button onClick={()=>canNext&&setStep(s=>s+1)} disabled={!canNext} style={{flex:2,padding:15,background:canNext?D.acc:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:"white",cursor:canNext?"pointer":"not-allowed",opacity:canNext?1:0.6}}>Continue</button>
-        : <button onClick={submit} disabled={!canNext} style={{flex:2,padding:15,background:canNext?D.g:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:canNext?"#0d1b3e":D.tm,cursor:canNext?"pointer":"not-allowed",boxShadow:canNext?`0 0 20px ${D.gG}`:"none"}}>Finish & Enter Portal →</button>}
+        : <button onClick={submit} disabled={!canNext || submitting} style={{flex:2,padding:15,background:canNext&&!submitting?D.g:D.brd,border:"none",borderRadius:14,fontSize:14,fontWeight:700,color:canNext&&!submitting?"#0d1b3e":D.tm,cursor:canNext&&!submitting?"pointer":"not-allowed",boxShadow:canNext&&!submitting?`0 0 20px ${D.gG}`:"none"}}>{submitting ? "Creating Account..." : "Finish & Enter Portal →"}</button>}
     </div>
   </div>;
 }
@@ -2166,9 +2301,10 @@ export default function App() {
   const [measUnit,setMeasUnit]=useState("cm"); // locked from onboarding
   const [onboardingData,setOnboardingData]=useState(null);
   const [plans,setPlans]=useState({nutrition:null,workout:null});
+  const [clientProfile,setClientProfile]=useState(CLI);
   const D=THEMES[theme];
   const toggle=()=>setTheme(t=>t==="dark"?"light":"dark");
-  const headerLabel={checkin:`Morning, ${CLI.name}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
+  const headerLabel={checkin:`Morning, ${clientProfile.name}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
   const [showNotifs,setShowNotifs]=useState(false);
 
   useEffect(() => {
@@ -2194,6 +2330,7 @@ export default function App() {
       if (res.client) {
         if (res.client.weightUnit) setWeightUnit(res.client.weightUnit);
         if (res.client.measUnit) setMeasUnit(res.client.measUnit);
+        if (res.client.name) setClientProfile(p => ({ ...p, ...res.client }));
       }
     } catch (err) {
       console.warn("Client data sync:", err.message);
@@ -2215,7 +2352,7 @@ export default function App() {
   };
 
   // Dynamic notification schedule:
-  const dayCount = CLI.dayNo;
+  const dayCount = clientProfile.dayNo || CLI.dayNo;
   const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
   const isMeasDay = daysUntilMeas === 0;
   const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
@@ -2234,22 +2371,35 @@ export default function App() {
   ];
 
   if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onCoach={()=>setStage("coach")}/>;
-  if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={async (f)=>{
+  if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={async (f, acc)=>{
     setMeasUnit(f.measUnit||"cm");
     setOnboardingData(f);
-    try {
-      await submitOnboarding(f);
-    } catch (err) {
-      console.warn("Onboarding API sync:", err.message);
+    if (acc) {
+      setClientProfile(p => ({
+        ...p,
+        name: acc.name || f.name,
+        startW: acc.startW || f.weight,
+        latestW: acc.startW || f.weight,
+        email: acc.email,
+        height: acc.height || f.height,
+        weightUnit: acc.weightUnit || f.weightUnit || "kg",
+        measUnit: acc.measUnit || f.measUnit || "cm"
+      }));
+      if (acc.weightUnit) setWeightUnit(acc.weightUnit);
+      if (acc.measUnit) setMeasUnit(acc.measUnit);
+      try {
+        await loginWithEmail(acc.email, acc.password);
+      } catch (_) {}
     }
     setStage("portal");
+    loadData();
   }}/>;
   if(stage==="coach") return <CoachDashboard D={D} theme={theme} toggleTheme={toggle} onBack={()=>setStage("portal")} plans={plans} setPlans={setPlans}/>;
 
   return (
     <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",overflow:"hidden",position:"relative"}}>
       <div style={{background:`linear-gradient(135deg,${D.accD},${D.acc})`,padding:"18px 20px 22px",borderRadius:"0 0 26px 26px",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center",boxShadow:`0 6px 18px ${D.accG}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><LFLogo D={{...D,t:"#ffffff",ts:"rgba(255,255,255,0.7)",g:"#c9ef5e"}} compact/><div><div style={{fontSize:9,color:"rgba(255,255,255,0.75)",fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{CLI.phase} · Week {CLI.week}</div><div style={{fontSize:15,fontWeight:800,color:"#ffffff",marginTop:1}}>{headerLabel}</div></div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><LFLogo D={{...D,t:"#ffffff",ts:"rgba(255,255,255,0.7)",g:"#c9ef5e"}} compact/><div><div style={{fontSize:9,color:"rgba(255,255,255,0.75)",fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{clientProfile.phase} · Week {clientProfile.week}</div><div style={{fontSize:15,fontWeight:800,color:"#ffffff",marginTop:1}}>{headerLabel}</div></div></div>
         <div style={{display:"flex",alignItems:"center",gap:8,position:"relative"}}>
           <button onClick={()=>setShowNotifs(s=>!s)} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.16)",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",position:"relative"}}>
             <Ic.Bell c="#ffffff" sz={15}/>

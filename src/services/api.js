@@ -79,6 +79,13 @@ export async function submitOnboarding(payload) {
   });
 }
 
+export async function registerOnboarding(payload) {
+  return request("/public/onboarding/complete", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function getReportUploadUrl(fileName, contentType = "application/pdf") {
   return request("/client/reports/upload-url", {
     method: "POST",

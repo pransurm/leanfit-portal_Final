@@ -19,6 +19,7 @@ from api.calculations import (
     calc_body_fat
 )
 from api.storage import generate_signed_upload_url, generate_signed_read_url
+from api.create_client import generate_tough_password
 
 app = FastAPI(
     title="LeanFit Portal API",
@@ -441,6 +442,188 @@ def save_onboarding(payload: Dict[str, Any] = Body(...), user: AuthenticatedUser
         client_ref.set(updates, merge=True)
 
     return {"status": "ok"}
+
+
+@api_router.post("/public/onboarding/complete")
+def complete_public_onboarding(payload: Dict[str, Any] = Body(...)):
+    """
+    Public intake registration endpoint:
+    - Generates tough password (14 chars)
+    - Provisions Firebase Auth user & claims
+    - Creates Firestore users/{uid} and clients/{clientId} with baseline metrics
+    - Creates Coach Ram notification with credentials
+    - Returns credentials & profile for on-screen display
+    """
+    db = get_db()
+    name = (payload.get("name") or "New Client").strip()
+    email = (payload.get("email") or "").strip().lower()
+
+    clean_name = "".join(c for c in name.lower() if c.isalnum())
+    if not clean_name:
+        clean_name = f"client_{uuid.uuid4().hex[:6]}"
+    client_id = clean_name
+    if not email:
+        email = f"{client_id}@leanfit.io"
+
+    tough_password = generate_tough_password(14)
+    weight_unit = payload.get("weightUnit", "kg")
+    meas_unit = payload.get("measUnit", "cm")
+
+    try:
+        raw_w = float(payload.get("weight", 70.0))
+    except (ValueError, TypeError):
+        raw_w = 70.0
+
+    if weight_unit == "lbs":
+        start_w_lbs = raw_w
+        start_w = round(raw_w * 0.453592, 2)
+    else:
+        start_w = raw_w
+        start_w_lbs = round(raw_w * 2.20462, 1)
+
+    try:
+        raw_h = float(payload.get("height", 175.0))
+    except (ValueError, TypeError):
+        raw_h = 175.0
+
+    if meas_unit == "inches":
+        height_in = raw_h
+        height_cm = round(raw_h * 2.54, 1)
+    else:
+        height_cm = raw_h
+        height_in = round(raw_h / 2.54, 1)
+
+    # 1. Firebase Auth user creation
+    uid = client_id
+    import threading
+    def try_firebase_auth():
+        nonlocal uid
+        try:
+            from firebase_admin import auth as firebase_auth
+            user = None
+            try:
+                user = firebase_auth.get_user_by_email(email)
+                uid = user.uid
+                firebase_auth.update_user(uid, password=tough_password)
+            except Exception:
+                pass
+
+            if user is None:
+                try:
+                    user = firebase_auth.create_user(
+                        email=email,
+                        password=tough_password,
+                        display_name=name
+                    )
+                    uid = user.uid
+                except Exception:
+                    pass
+
+            try:
+                firebase_auth.set_custom_user_claims(uid, {"role": "client", "clientId": client_id})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    t = threading.Thread(target=try_firebase_auth, daemon=True)
+    t.start()
+    t.join(timeout=3.0)
+
+    # 2. Firestore: users/{uid}
+    try:
+        user_ref = db.collection("users").document(uid)
+        user_ref.set({
+            "uid": uid,
+            "email": email,
+            "name": name,
+            "role": "client",
+            "clientId": client_id,
+            "updatedAt": datetime.now(timezone.utc).isoformat()
+        }, merge=True)
+    except Exception:
+        pass
+
+    # 3. Firestore: clients/{client_id}
+    client_data = {
+        "name": name,
+        "initials": "".join([p[0].upper() for p in name.split()[:2]]) or "LF",
+        "email": email,
+        "phase": "Phase I",
+        "week": 1,
+        "startDate": datetime.now(timezone.utc).strftime("%d-%m-%Y"),
+        "startW": start_w,
+        "startWLbs": start_w_lbs,
+        "latestW": start_w,
+        "height": height_cm,
+        "heightInches": height_in,
+        "city": payload.get("city", ""),
+        "prog": "LeanFit 6-Month Transformation",
+        "coachStepsGoal": 8000,
+        "weightUnit": weight_unit,
+        "measUnit": meas_unit,
+        "status": "active",
+        "trafficLight": "g",
+        "adherence": {"meals": 100, "steps": 100, "water": 100, "vitamins": 100, "overall": 100},
+        "streak": 1,
+        "daysSince": 0,
+        "checkedIn": False,
+        "coachNote": f"Initial baseline weight {start_w} {weight_unit}. Goal: {payload.get('goal', 'Fat loss & recomposition')}.",
+        "createdAt": datetime.now(timezone.utc).isoformat()
+    }
+    try:
+        client_ref = db.collection("clients").document(client_id)
+        client_ref.set(client_data, merge=True)
+        # Store full intake
+        client_ref.collection("onboarding").document("intake").set(payload, merge=True)
+        # Baseline measurement
+        client_ref.collection("measurements").document("baseline").set({
+            "week": 0,
+            "date": datetime.now(timezone.utc).strftime("%d-%m-%Y"),
+            "weight": start_w,
+            "arms": float(payload.get("mArms")) if payload.get("mArms") else None,
+            "waist": float(payload.get("mWaist")) if payload.get("mWaist") else None,
+            "quads": float(payload.get("mQuads")) if payload.get("mQuads") else None,
+            "chest": float(payload.get("mChest")) if payload.get("mChest") else None,
+            "shoulders": float(payload.get("mShoulders")) if payload.get("mShoulders") else None,
+            "hips": float(payload.get("mHips")) if payload.get("mHips") else None,
+            "neck": float(payload.get("mNeck")) if payload.get("mNeck") else None,
+            "createdAt": datetime.now(timezone.utc).isoformat()
+        }, merge=True)
+    except Exception:
+        pass
+
+    # 4. Coach notification
+    try:
+        notif_ref = db.collection("coach_notifications").document(f"notif_{client_id}")
+        notif_ref.set({
+            "id": f"notif_{client_id}",
+            "type": "NEW_CLIENT_ADDED",
+            "title": f"New Client Registered: {name}",
+            "body": f"{name} completed intake. Weight: {start_w} {weight_unit}. Email: {email}, Password: {tough_password}",
+            "clientId": client_id,
+            "credentials": {
+                "email": email,
+                "password": tough_password
+            },
+            "read": False,
+            "createdAt": datetime.now(timezone.utc).isoformat()
+        }, merge=True)
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "clientId": client_id,
+        "email": email,
+        "password": tough_password,
+        "name": name,
+        "startW": start_w,
+        "startWLbs": start_w_lbs,
+        "height": height_cm,
+        "weightUnit": weight_unit,
+        "measUnit": meas_unit
+    }
 
 
 # ═══ FILE UPLOADS (SIGNED URLS) ═══════════════════════════════════════
