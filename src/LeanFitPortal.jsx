@@ -54,6 +54,7 @@ const COACH_CLIENTS = [
   {id:2,name:"Ninad Naik",initials:"NN",phase:"Phase I",week:1,startDate:"8 Sep 2026",endDate:"1 Dec 2026",startW:71.0,latestW:70.6,adherence:71,checkedIn:false,streak:4,city:"Mumbai",prog:"6-Month",status:"active",latestMeals:2,latestSteps:3500,latestWater:1.5,latestStress:7,latestEnergy:5,daysSince:1,note:"Struggling with travel"},
   {id:3,name:"Srikanth",initials:"SK",phase:"Phase I",week:3,startDate:"25 Aug 2026",endDate:"18 Nov 2026",startW:85.0,latestW:83.4,adherence:92,checkedIn:true,streak:15,city:"Bangalore",prog:"3-Month",status:"active",latestMeals:5,latestSteps:9200,latestWater:3.0,latestStress:2,latestEnergy:9,daysSince:0,note:""},
   {id:4,name:"Gaurav",initials:"GV",phase:"Phase I",week:1,startDate:"10 Sep 2026",endDate:"10 Mar 2027",startW:92.0,latestW:91.5,adherence:65,checkedIn:false,streak:2,city:"Delhi",prog:"6-Month",status:"paused",latestMeals:1,latestSteps:2100,latestWater:1.0,latestStress:9,latestEnergy:3,daysSince:3,note:"On family trip",pauseReason:"Travel / Work Trip",resumeDate:"20 Sep 2026"},
+  {id:5,name:"Adesh",initials:"AD",phase:"Phase I",week:1,startDate:"19 Sep 2026",endDate:"19 Mar 2027",startW:94.0,latestW:94.0,adherence:100,checkedIn:true,streak:1,city:"Mumbai",prog:"6-Month",status:"active",latestMeals:5,latestSteps:8000,latestWater:3.0,latestStress:3,latestEnergy:8,daysSince:0,note:"New intake client.",email:"adesh@leanfit.io"},
 ];
 const PROTEIN_OPTS = ["Eggs","Chicken","Paneer","Whey Protein","Tofu","Fish","Red Meat","Greek Yoghurt","Soya Chunks","Edamame"];
 const MEAS_PARTS = [
@@ -366,7 +367,22 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   const F=(k,v)=>setForm(p=>({...p,[k]:v}));
   const MF=(k,v)=>setMeasForm(p=>({...p,[k]:v}));
   const handlePhoto=(slot,file)=>{if(!file)return;const r=new FileReader();r.onload=ev=>setPhotos(p=>({...p,[slot]:ev.target.result}));r.readAsDataURL(file);};
-  const isMeasDay = (CLI.dayNo-1)%7===0;
+
+  // Schedule logic:
+  // - Body measurements every 7 days (e.g. Day 8, 15, 22...)
+  // - Progress photos every 14 days (e.g. Day 15, 29, 43...)
+  // - Reminders appear 3 days prior to due day
+  const dayCount = CLI.dayNo;
+  const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
+  const isMeasDay = daysUntilMeas === 0;
+  const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
+  const [showMeasSection, setShowMeasSection] = useState(isMeasDay);
+
+  const daysUntilPhoto = ((14 - ((dayCount - 1) % 14)) % 14);
+  const isPhotoDay = daysUntilPhoto === 0;
+  const showPhotoReminder = !isPhotoDay && daysUntilPhoto <= 3;
+  const [showPhotoSection, setShowPhotoSection] = useState(isPhotoDay);
+
   const unit = weightUnit||pendingUnit;
   const startDisp = toUnit(CLI.startW, unit);
   const daysIntoWeek = (CLI.dayNo-1)%7; // 0 = first day of a new week → workout count resets
@@ -405,7 +421,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
       mealNote: form.meals<=3?form.mealNote:"",
       multi: form.multi===true,
       note: form.note,
-      photos: isMeasDay?photos:null
+      photos: (isPhotoDay || showPhotoSection) ? photos : null
     };
 
     try {
@@ -414,7 +430,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
       console.warn("Backend checkin sync:", err.message);
     }
 
-    if (isMeasDay && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front)) {
+    if ((isMeasDay || showMeasSection) && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front)) {
       try {
         await submitMeasurement({
           week: CLI.week,
@@ -543,55 +559,116 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
         </div>
       </GCard>
 
-      {/* WEEKLY MEASUREMENTS — every 7 days */}
-      {isMeasDay && (
-        <>
-          <GCard D={D} glowColor={D.amG} style={{marginBottom:12}}>
-            <div style={{background:D.amG,borderRadius:10,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.am}30`}}>
-              <div style={{fontSize:10,color:D.am,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>Weekly Measurement Day</div>
-              <div style={{fontSize:11,color:D.ts,lineHeight:1.5}}>This section appears every 7 days. All measurements are mandatory today.</div>
-            </div>
-            <SL D={D} color={D.am}>Body Measurements ({effUnit === "inches" ? "Track Every Inch Lost" : "Track Every Centimetre Lost"})</SL>
-            <div style={{background:D.c2,borderRadius:10,padding:"6px 10px",marginBottom:14,border:`1px solid ${D.brd}`,display:"flex",alignItems:"center",gap:6}}>
-              <Ic.Lock c={D.tm} sz={12}/>
-              <span style={{fontSize:10,color:D.tm}}>Unit locked to <strong style={{color:D.ts}}>{effUnit}</strong> — set during onboarding</span>
-            </div>
-            {MEAS_PARTS.map(({k,l,guide})=>(
-              <div key={k} style={{marginBottom:14}}>
-                <div style={{fontSize:12,color:D.t,fontWeight:600,marginBottom:2}}>{l} ({effUnit}) *</div>
-                <div style={{fontSize:10,color:D.ts,marginBottom:6,fontStyle:"italic"}}>{guide}</div>
-                <Ti D={D} value={measForm[k]||""} onChange={v=>MF(k,v)} placeholder={`e.g. ${effUnit==="inches"?"12.5":"32"}`} type="number" style={{border:`1.5px solid ${errors.some(e=>e.includes(l))?D.r:D.inpBrd}`}}/>
+      {/* ── 3-DAY PRIOR MEASUREMENT REMINDER ── */}
+      {showMeasReminder && (
+        <GCard D={D} glowColor={D.amG} style={{marginBottom:12,border:`1.5px solid ${D.am}50`,background:D.amG}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                <span style={{fontSize:13}}>⏳</span>
+                <span style={{fontSize:11,fontWeight:800,color:D.am,textTransform:"uppercase",letterSpacing:1}}>
+                  Measurement Day in {daysUntilMeas} Day{daysUntilMeas>1?"s":""}
+                </span>
               </div>
+              <div style={{fontSize:11.5,color:D.t,lineHeight:1.4}}>
+                Your weekly measurement check-in is scheduled for <strong>Day {dayCount + daysUntilMeas}</strong>. Have your measuring tape ready!
+              </div>
+            </div>
+            <button 
+              type="button" 
+              onClick={()=>setShowMeasSection(s=>!s)}
+              style={{flexShrink:0,padding:"6px 11px",borderRadius:8,border:`1px solid ${D.am}80`,background:showMeasSection?D.am:"transparent",color:showMeasSection?"#000":D.am,fontSize:10,fontWeight:700,cursor:"pointer"}}
+            >
+              {showMeasSection ? "Hide ▲" : "Log Early ▼"}
+            </button>
+          </div>
+        </GCard>
+      )}
+
+      {/* ── WEEKLY MEASUREMENTS — Visible every 7 days (or toggled early) ── */}
+      {(isMeasDay || showMeasSection) && (
+        <GCard D={D} glowColor={D.amG} style={{marginBottom:12}}>
+          <div style={{background:D.amG,borderRadius:10,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.am}30`}}>
+            <div style={{fontSize:10,color:D.am,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>
+              {isMeasDay ? "Weekly Measurement Day (Every 7 Days)" : "Early Measurement Entry"}
+            </div>
+            <div style={{fontSize:11,color:D.ts,lineHeight:1.5}}>
+              This section is scheduled every 7 days. All 7 measurements are tracked to monitor inch loss.
+            </div>
+          </div>
+          <SL D={D} color={D.am}>Body Measurements ({effUnit === "inches" ? "Track Every Inch Lost" : "Track Every Centimetre Lost"})</SL>
+          <div style={{background:D.c2,borderRadius:10,padding:"6px 10px",marginBottom:14,border:`1px solid ${D.brd}`,display:"flex",alignItems:"center",gap:6}}>
+            <Ic.Lock c={D.tm} sz={12}/>
+            <span style={{fontSize:10,color:D.tm}}>Unit locked to <strong style={{color:D.ts}}>{effUnit}</strong> — set during onboarding</span>
+          </div>
+          {MEAS_PARTS.map(({k,l,guide})=>(
+            <div key={k} style={{marginBottom:14}}>
+              <div style={{fontSize:12,color:D.t,fontWeight:600,marginBottom:2}}>{l} ({effUnit}) *</div>
+              <div style={{fontSize:10,color:D.ts,marginBottom:6,fontStyle:"italic"}}>{guide}</div>
+              <Ti D={D} value={measForm[k]||""} onChange={v=>MF(k,v)} placeholder={`e.g. ${effUnit==="inches"?"12.5":"32"}`} type="number" style={{border:`1.5px solid ${errors.some(e=>e.includes(l))?D.r:D.inpBrd}`}}/>
+            </div>
+          ))}
+          {autoBF && (
+            <div style={{background:D.c2,borderRadius:12,padding:"12px 14px",marginTop:4,border:`1px solid ${D.brd}`}}>
+              <div style={{fontSize:9,color:D.acc,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>Auto-Calculated Body Fat (US Military)</div>
+              <div style={{fontSize:28,fontWeight:900,color:D.acc}}>{autoBF}%</div>
+              <div style={{fontSize:10,color:D.ts,marginTop:4}}>Waist: {waistCm} cm | Neck: {neckCm} cm</div>
+            </div>
+          )}
+        </GCard>
+      )}
+
+      {/* ── 3-DAY PRIOR PROGRESS PHOTO REMINDER ── */}
+      {showPhotoReminder && (
+        <GCard D={D} glowColor={D.purG} style={{marginBottom:12,border:`1.5px solid ${D.pur}50`,background:D.purG}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                <span style={{fontSize:13}}>📸</span>
+                <span style={{fontSize:11,fontWeight:800,color:D.pur,textTransform:"uppercase",letterSpacing:1}}>
+                  Progress Photos in {daysUntilPhoto} Day{daysUntilPhoto>1?"s":""}
+                </span>
+              </div>
+              <div style={{fontSize:11.5,color:D.t,lineHeight:1.4}}>
+                Your bi-weekly progress photos are due on <strong>Day {dayCount + daysUntilPhoto}</strong>. Take morning photos on an empty stomach.
+              </div>
+            </div>
+            <button 
+              type="button" 
+              onClick={()=>setShowPhotoSection(s=>!s)}
+              style={{flexShrink:0,padding:"6px 11px",borderRadius:8,border:`1px solid ${D.pur}80`,background:showPhotoSection?D.pur:"transparent",color:showPhotoSection?"#fff":D.pur,fontSize:10,fontWeight:700,cursor:"pointer"}}
+            >
+              {showPhotoSection ? "Hide ▲" : "Upload Early ▼"}
+            </button>
+          </div>
+        </GCard>
+      )}
+
+      {/* ── BI-WEEKLY PROGRESS PHOTOS — Visible every 14 days (or toggled early) ── */}
+      {(isPhotoDay || showPhotoSection) && (
+        <GCard D={D} glowColor={D.purG} style={{marginBottom:12}}>
+          <div style={{background:D.purG,borderRadius:10,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.pur}30`}}>
+            <div style={{fontSize:10,color:D.pur,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>
+              {isPhotoDay ? "Bi-Weekly Progress Photos (Every 14 Days)" : "Early Progress Photos"}
+            </div>
+            <div style={{fontSize:11,color:D.ts,lineHeight:1.5}}>
+              Upload Front, Side, and Back photos. Same time, same lighting, relaxed morning pose.
+            </div>
+          </div>
+          <SL D={D} color={D.pur}>Progress Photos</SL>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {["Front","Side","Back"].map(v=>(
+              <label key={v} style={{background:photos[v]?"transparent":D.c2,borderRadius:10,border:`2px dashed ${D.pur}40`,aspectRatio:"3/4",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",overflow:"hidden",position:"relative"}}>
+                {photos[v]
+                  ? <img src={photos[v]} alt={v} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  : <><Ic.Camera c={D.tm} sz={20}/><div style={{fontSize:10,color:D.tm}}>{v}</div></>}
+                <input type="file" accept="image/*" onChange={e=>handlePhoto(v,e.target.files[0])} style={{display:"none"}}/>
+                {photos[v] && <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.55)",color:"white",fontSize:9,textAlign:"center",padding:"3px 0"}}>{v}</div>}
+              </label>
             ))}
-            {autoBF && (
-              <div style={{background:D.c2,borderRadius:12,padding:"12px 14px",marginTop:4,border:`1px solid ${D.brd}`}}>
-                <div style={{fontSize:9,color:D.acc,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>Auto-Calculated Body Fat (US Military)</div>
-                <div style={{fontSize:28,fontWeight:900,color:D.acc}}>{autoBF}%</div>
-                <div style={{fontSize:10,color:D.ts,marginTop:4}}>Waist: {waistCm} cm | Neck: {neckCm} cm</div>
-              </div>
-            )}
-          </GCard>
-          {/* WEEKLY PROGRESS PHOTOS */}
-          <GCard D={D} glowColor={D.purG} style={{marginBottom:12}}>
-            <div style={{background:D.purG,borderRadius:10,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.pur}30`}}>
-              <div style={{fontSize:10,color:D.pur,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>Weekly Progress Photos (Optional)</div>
-              <div style={{fontSize:11,color:D.ts,lineHeight:1.5}}>Upload alongside your measurements. Same time, same spot each week.</div>
-            </div>
-            <SL D={D} color={D.pur}>Progress Photos</SL>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-              {["Front","Side","Back"].map(v=>(
-                <label key={v} style={{background:photos[v]?"transparent":D.c2,borderRadius:10,border:`2px dashed ${D.pur}40`,aspectRatio:"3/4",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",overflow:"hidden",position:"relative"}}>
-                  {photos[v]
-                    ? <img src={photos[v]} alt={v} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                    : <><Ic.Camera c={D.tm} sz={20}/><div style={{fontSize:10,color:D.tm}}>{v}</div></>}
-                  <input type="file" accept="image/*" onChange={e=>handlePhoto(v,e.target.files[0])} style={{display:"none"}}/>
-                  {photos[v] && <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.55)",color:"white",fontSize:9,textAlign:"center",padding:"3px 0"}}>{v}</div>}
-                </label>
-              ))}
-            </div>
-            <div style={{marginTop:10,fontSize:11,color:D.tm,textAlign:"center"}}>Morning · Empty Stomach · Relaxed Pose</div>
-          </GCard>
-        </>
+          </div>
+          <div style={{marginTop:10,fontSize:11,color:D.tm,textAlign:"center"}}>Morning · Empty Stomach · Relaxed Pose</div>
+        </GCard>
       )}
 
       {/* ADDITIONAL NOTES */}
@@ -1576,15 +1653,51 @@ function OnboardingScreen({D,onComplete}) {
     name:"",age:"",gender:"",phone:"",email:"",city:"",occupation:"",
     height:"",weight:"",weightUnit:"kg",measUnit:"cm",
     conditions:"",injuries:"",medications:"",allergies:"",
-    sleepHrs:"",workType:"",activityLevel:"",smoking:"",alcohol:"",stressBaseline:"",
+    avgSteps:"",sleepHrs:"",workType:"",activityLevel:"",smoking:"",alcohol:"",stressBaseline:"",
     diet:"",proteins:[],mealsPerDay:"",foodDislikes:"",cookingAccess:"",
     trainingExp:"",equipment:"",workoutTime:"",physicalLimits:"",
     goal:"",targetTimeline:"",motivation:"",obstacle:"",why:"",
     mArms:"",mWaist:"",mQuads:"",mChest:"",mShoulders:"",mHips:"",mNeck:"",
     photoFront:null,photoSide:null,photoBack:null,
   });
-  const F=(k,v)=>setForm(p=>({...p,[k]:v}));
-  const toggleProtein=(p)=>setForm(f=>({...f,proteins:f.proteins.includes(p)?f.proteins.filter(x=>x!==p):[...f.proteins,p]}));
+  const [autosaved,setAutosaved]=useState(true);
+
+  // Restore draft from localStorage if available
+  useEffect(()=>{
+    try {
+      const draft = localStorage.getItem("leanfit_onboarding_draft");
+      if (draft) {
+        const parsed = JSON.parse(draft);
+        setForm(p=>({...p,...parsed}));
+      }
+    } catch (_) {}
+  },[]);
+
+  const autoSaveToBackend = useCallback(async (updatedForm)=>{
+    try {
+      setAutosaved(false);
+      localStorage.setItem("leanfit_onboarding_draft", JSON.stringify(updatedForm));
+      await submitOnboarding(updatedForm);
+      setAutosaved(true);
+    } catch (err) {
+      // Still saved to local draft even if backend network blips
+      setAutosaved(true);
+    }
+  },[]);
+
+  const F=(k,v)=>{
+    setForm(p=>{
+      const updated={...p,[k]:v};
+      autoSaveToBackend(updated);
+      return updated;
+    });
+  };
+  const toggleProtein=(p)=>setForm(f=>{
+    const updatedProteins = f.proteins.includes(p)?f.proteins.filter(x=>x!==p):[...f.proteins,p];
+    const updated = {...f, proteins: updatedProteins};
+    autoSaveToBackend(updated);
+    return updated;
+  });
 
   const steps=[
     {title:"Personal & Contact",sub:"Let's get the essentials down first."},
@@ -1592,33 +1705,98 @@ function OnboardingScreen({D,onComplete}) {
     {title:"Health History",sub:"Helps Ram flag anything to be careful of before building your plan."},
     {title:"Lifestyle & Habits",sub:"Your day-to-day routine outside the gym matters just as much."},
     {title:"Nutrition Preferences",sub:"So Ram can plan meals you'll actually eat."},
-    {title:"Workout Experience",sub:"What you've done before, and what you have access to now."},
+    {title:"Exercise Experience",sub:"What you've done before, and what you have access to now."},
     {title:"Goals & Motivation",sub:"What are we actually working towards?"},
-    {title:"Body Measurements",sub:"Your baseline — every centimetre from here will be tracked."},
-    {title:"Progress Photos",sub:"Day 1 photos — empty stomach, morning, relaxed pose."},
+    {title:"Body Measurements",sub:"Your baseline — all measurements are mandatory (*)."},
+    {title:"Progress Photos",sub:"Day 1 photos — empty stomach, morning, relaxed pose (optional)."},
   ];
+
   const canNext = [
+    // Step 0: Personal & Contact
     !!form.name && !!form.age && (!form.email || form.email.includes("@")),
+    // Step 1: Body Baseline & Units
     !!form.height && !!form.weight,
-    true,
-    true,
-    true,
-    true,
-    !!form.goal,
-    true, // Body measurements optional
+    // Step 2: Health History (ALL mandatory)
+    !!form.conditions?.trim() && !!form.injuries?.trim() && !!form.medications?.trim() && !!form.allergies?.trim(),
+    // Step 3: Lifestyle & Habits (ALL mandatory including average steps)
+    !!form.avgSteps && !!form.sleepHrs && !!form.workType && !!form.activityLevel && !!form.smoking && !!form.alcohol && !!form.stressBaseline,
+    // Step 4: Nutrition Preferences (ALL mandatory)
+    !!form.diet && form.proteins.length > 0 && !!form.mealsPerDay && !!form.cookingAccess,
+    // Step 5: Exercise Experience (ALL mandatory)
+    !!form.trainingExp && !!form.equipment && !!form.workoutTime && !!form.physicalLimits?.trim(),
+    // Step 6: Goals & Motivation (ALL mandatory)
+    !!form.goal?.trim() && !!form.targetTimeline?.trim() && !!form.motivation?.trim() && !!form.obstacle?.trim() && !!form.why?.trim(),
+    // Step 7: Body Measurements (ALL mandatory)
+    !!form.mArms && !!form.mWaist && !!form.mQuads && !!form.mChest && !!form.mShoulders && !!form.mHips && !!form.mNeck,
+    // Step 8: Progress Photos (Optional)
     true,
   ][step] ?? true;
 
   const submit=()=>onComplete(form);
 
   return <div style={{minHeight:"100vh",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
-    <div style={{background:`linear-gradient(135deg,${D.accD},${D.acc})`,padding:"22px 22px 26px",borderRadius:"0 0 26px 26px",flexShrink:0}}>
-      <div style={{marginBottom:14}}><LFLogo D={{...D,t:"#ffffff",ts:"rgba(255,255,255,0.7)",g:"#c9ef5e"}} compact/></div>
-      <div style={{fontSize:10,color:"rgba(255,255,255,0.7)",fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>Step {step+1} of {steps.length}</div>
-      <div style={{fontSize:22,fontWeight:900,color:"#ffffff",marginBottom:4}}>{steps[step].title}</div>
-      <div style={{fontSize:12,color:"rgba(255,255,255,0.8)",lineHeight:1.5}}>{steps[step].sub}</div>
-      <div style={{display:"flex",gap:4,marginTop:16}}>
-        {steps.map((_,i)=><div key={i} style={{flex:1,height:4,borderRadius:2,background:i<=step?"#ffffff":"rgba(255,255,255,0.3)"}}/>)}
+    {/* TOP BRAND HEADER BANNER (Deep Navy to Royal Blue Gradient with Centered Logo Hero) */}
+    <div style={{
+      background: "linear-gradient(90deg, #071329 0%, #0c204c 30%, #153c8c 70%, #1d4fd8 100%)",
+      padding: "26px 20px 22px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      borderBottom: "1px solid rgba(255,255,255,0.1)",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+      flexShrink: 0
+    }}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center"}}>
+        {/* LF Monogram */}
+        <div style={{fontSize:34,fontWeight:900,fontStyle:"italic",color:"#ffffff",letterSpacing:-1,lineHeight:1}}>
+          LF
+        </div>
+        {/* LEANFIT */}
+        <div style={{fontSize:14,fontWeight:900,color:"#ffffff",letterSpacing:6,marginTop:5,textIndent:6}}>
+          LEANFIT
+        </div>
+        {/* HEALTH & LIFESTYLE */}
+        <div style={{fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.75)",letterSpacing:2.5,marginTop:3,textIndent:2.5}}>
+          — HEALTH & LIFESTYLE —
+        </div>
+      </div>
+    </div>
+
+    {/* SUB-HEADER: COACHING INTAKE & TITLE */}
+    <div style={{
+      background: D.dark ? D.c1 : "#f0f5fc",
+      borderBottom: `1px solid ${D.dark ? D.brd : "rgba(24, 72, 160, 0.12)"}`,
+      padding: "18px 20px 14px",
+      flexShrink: 0
+    }}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+        <div>
+          <div style={{fontSize:10.5,fontWeight:800,fontFamily:"monospace",color:"#2563eb",letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>
+            COACHING INTAKE
+          </div>
+          <div style={{fontSize:24,fontWeight:900,color:D.t,letterSpacing:-0.5,lineHeight:1.15}}>
+            Apply for<br/>1–1 Coaching
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",borderRadius:20,padding:"4px 10px",fontSize:10,fontWeight:700,color:"#10b981"}}>
+          <span style={{width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
+          {autosaved ? "Autosaved" : "Saving..."}
+        </div>
+      </div>
+
+      {/* STEP PROGRESS BAR */}
+      <div style={{marginTop:14,paddingTop:10,borderTop:`1px solid ${D.dark ? D.brd : "rgba(24, 72, 160, 0.08)"}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:10,fontWeight:700,color:D.ts,textTransform:"uppercase",letterSpacing:1}}>
+            Step {step+1} of {steps.length}: <span style={{color:D.t}}>{steps[step].title}</span>
+          </div>
+          <div style={{fontSize:10,fontWeight:800,color:"#2563eb"}}>{Math.round(((step+1)/steps.length)*100)}%</div>
+        </div>
+        <div style={{display:"flex",gap:4}}>
+          {steps.map((_,i)=><div key={i} style={{flex:1,height:4,borderRadius:2,background:i<=step?"#2563eb":D.dark?"rgba(255,255,255,0.1)":"rgba(37,99,235,0.15)",transition:"background 0.3s ease"}}/>)}
+        </div>
+        <div style={{fontSize:11,color:D.ts,marginTop:6,lineHeight:1.4}}>{steps[step].sub}</div>
       </div>
     </div>
 
@@ -1657,12 +1835,40 @@ function OnboardingScreen({D,onComplete}) {
 
       {step===1 && <>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Weight Unit</SL>
-          <Tog3 D={D} options={["kg","lbs"]} value={form.weightUnit} onChange={v=>F("weightUnit",v)}/>
+          <SL D={D}>Weight Unit *</SL>
+          <Tog3 D={D} options={["kg","lbs"]} value={form.weightUnit} onChange={newUnit => {
+            if (newUnit !== form.weightUnit) {
+              setForm(p => {
+                let newWeight = p.weight;
+                if (p.weight) {
+                  newWeight = newUnit === "lbs" 
+                    ? +(parseFloat(p.weight) * 2.20462).toFixed(1)
+                    : +(parseFloat(p.weight) / 2.20462).toFixed(1);
+                }
+                const updated = { ...p, weightUnit: newUnit, weight: newWeight || "" };
+                autoSaveToBackend(updated);
+                return updated;
+              });
+            }
+          }}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Measurement Unit</SL>
-          <Tog3 D={D} options={["cm","inches"]} value={form.measUnit} onChange={v=>F("measUnit",v)}/>
+          <SL D={D}>Measurement Unit *</SL>
+          <Tog3 D={D} options={["cm","inches"]} value={form.measUnit} onChange={newUnit => {
+            if (newUnit !== form.measUnit) {
+              setForm(p => {
+                let newHeight = p.height;
+                if (p.height) {
+                  newHeight = newUnit === "inches"
+                    ? +(parseFloat(p.height) / 2.54).toFixed(1)
+                    : +(parseFloat(p.height) * 2.54).toFixed(1);
+                }
+                const updated = { ...p, measUnit: newUnit, height: newHeight || "" };
+                autoSaveToBackend(updated);
+                return updated;
+              });
+            }
+          }}/>
           <div style={{fontSize:10,color:D.tm,marginTop:8}}>⚠ This locks once you start — it's what every weekly measurement will use.</div>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
@@ -1677,91 +1883,95 @@ function OnboardingScreen({D,onComplete}) {
 
       {step===2 && <>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Existing Medical Conditions</SL>
-          <Ta D={D} value={form.conditions} onChange={v=>F("conditions",v)} placeholder="e.g. thyroid, PCOS, diabetes, high BP, none..." rows={3}/>
+          <SL D={D}>Existing Medical Conditions *</SL>
+          <Ta D={D} value={form.conditions} onChange={v=>F("conditions",v)} placeholder="e.g. thyroid, PCOS, diabetes, high BP, or 'None'..." rows={3}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Past Injuries Or Surgeries</SL>
-          <Ta D={D} value={form.injuries} onChange={v=>F("injuries",v)} placeholder="e.g. lower back, knee surgery in 2022, shoulder impingement, none..." rows={3}/>
+          <SL D={D}>Past Injuries Or Surgeries *</SL>
+          <Ta D={D} value={form.injuries} onChange={v=>F("injuries",v)} placeholder="e.g. lower back, knee surgery in 2022, shoulder impingement, or 'None'..." rows={3}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Current Medications</SL>
-          <Ta D={D} value={form.medications} onChange={v=>F("medications",v)} placeholder="Anything you're currently taking, none if not applicable" rows={2}/>
+          <SL D={D}>Current Medications *</SL>
+          <Ta D={D} value={form.medications} onChange={v=>F("medications",v)} placeholder="Anything you're currently taking, or 'None' if not applicable" rows={2}/>
         </GCard>
         <GCard D={D}>
-          <SL D={D}>Allergies</SL>
-          <Ta D={D} value={form.allergies} onChange={v=>F("allergies",v)} placeholder="Food, medication, or environmental allergies" rows={2}/>
+          <SL D={D}>Allergies *</SL>
+          <Ta D={D} value={form.allergies} onChange={v=>F("allergies",v)} placeholder="Food, medication, or environmental allergies, or 'None' if none" rows={2}/>
         </GCard>
       </>}
 
       {step===3 && <>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Average Sleep (Hours/Night)</SL>
+          <SL D={D}>Average Daily Steps *</SL>
+          <Ti D={D} type="number" value={form.avgSteps} onChange={v=>F("avgSteps",v)} placeholder="e.g. 5000, 8000, 10000"/>
+        </GCard>
+        <GCard D={D} style={{marginBottom:12}}>
+          <SL D={D}>Average Sleep (Hours/Night) *</SL>
           <Ti D={D} type="number" value={form.sleepHrs} onChange={v=>F("sleepHrs",v)} placeholder="e.g. 6.5"/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Work Schedule</SL>
+          <SL D={D}>Work Schedule *</SL>
           <BtnGrp D={D} options={["Desk Job","On My Feet All Day","Frequent Travel","Shift-Based","Mixed"]} value={form.workType} onChange={v=>F("workType",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Daily Activity Level (Outside Workouts)</SL>
+          <SL D={D}>Daily Activity Level (Outside Workouts) *</SL>
           <BtnGrp D={D} options={["Mostly Sedentary","Lightly Active","Moderately Active","Very Active"]} value={form.activityLevel} onChange={v=>F("activityLevel",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Smoking</SL>
+          <SL D={D}>Smoking *</SL>
           <BtnGrp D={D} options={["Never","Occasionally","Regularly","Trying To Quit"]} value={form.smoking} onChange={v=>F("smoking",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Alcohol</SL>
+          <SL D={D}>Alcohol *</SL>
           <BtnGrp D={D} options={["Never","Occasionally","Weekly","Frequently"]} value={form.alcohol} onChange={v=>F("alcohol",v)}/>
         </GCard>
         <GCard D={D}>
-          <SL D={D}>Typical Stress Level</SL>
+          <SL D={D}>Typical Stress Level *</SL>
           <BtnGrp D={D} options={["Low","Moderate","High","Very High"]} value={form.stressBaseline} onChange={v=>F("stressBaseline",v)}/>
         </GCard>
       </>}
 
       {step===4 && <>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Diet Type</SL>
+          <SL D={D}>Diet Type *</SL>
           <BtnGrp D={D} options={["Vegetarian","Non-Vegetarian","Eggetarian","Vegan","Jain"]} value={form.diet} onChange={v=>F("diet",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Protein Sources You Eat</SL>
+          <SL D={D}>Protein Sources You Eat *</SL>
           <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
             {PROTEIN_OPTS.map(p=>{const sel=form.proteins.includes(p);return <button key={p} onClick={()=>toggleProtein(p)} style={{padding:"8px 14px",borderRadius:20,border:`2px solid ${sel?D.g:D.brd}`,background:sel?D.gG:"transparent",color:sel?D.g:D.ts,fontWeight:sel?700:400,fontSize:12,cursor:"pointer"}}>{p}</button>;})}
           </div>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Preferred Meals Per Day</SL>
+          <SL D={D}>Preferred Meals Per Day *</SL>
           <BtnGrp D={D} options={["2","3","4","5+"]} value={form.mealsPerDay} onChange={v=>F("mealsPerDay",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Foods You Dislike Or Won't Eat</SL>
-          <Ta D={D} value={form.foodDislikes} onChange={v=>F("foodDislikes",v)} placeholder="e.g. no mushrooms, can't stand bland food, hate oats..." rows={2}/>
+          <SL D={D}>Foods You Dislike Or Won't Eat *</SL>
+          <Ta D={D} value={form.foodDislikes} onChange={v=>F("foodDislikes",v)} placeholder="e.g. no mushrooms, can't stand bland food, hate oats, or 'None'..." rows={2}/>
         </GCard>
         <GCard D={D}>
-          <SL D={D}>Cooking Access</SL>
+          <SL D={D}>Cooking Access *</SL>
           <BtnGrp D={D} options={["Cook At Home","Have A Cook","Mostly Eat Out","Office Meals","Mixed"]} value={form.cookingAccess} onChange={v=>F("cookingAccess",v)}/>
         </GCard>
       </>}
 
       {step===5 && <>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Training Experience</SL>
-          <BtnGrp D={D} options={["Complete Beginner","Some Experience","Trained Before, Long Break","Currently Training"]} value={form.trainingExp} onChange={v=>F("trainingExp",v)}/>
+          <SL D={D}>Exercise Experience *</SL>
+          <BtnGrp D={D} options={["Complete Beginner","Some Experience","Exercised Before, Long Break","Currently Exercising"]} value={form.trainingExp} onChange={v=>F("trainingExp",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Equipment Access</SL>
+          <SL D={D}>Equipment Access *</SL>
           <BtnGrp D={D} options={["Full Gym","Home Gym (Basic)","Bodyweight Only","Hotel/Travel Gym"]} value={form.equipment} onChange={v=>F("equipment",v)}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Preferred Workout Time</SL>
+          <SL D={D}>Preferred Exercise Time *</SL>
           <BtnGrp D={D} options={["Early Morning","Morning","Afternoon","Evening","Night"]} value={form.workoutTime} onChange={v=>F("workoutTime",v)}/>
         </GCard>
         <GCard D={D}>
-          <SL D={D}>Physical Limitations For Training</SL>
-          <Ta D={D} value={form.physicalLimits} onChange={v=>F("physicalLimits",v)} placeholder="Anything Ram should account for when programming your workouts, none if not applicable" rows={3}/>
+          <SL D={D}>Physical Limitations For Exercise *</SL>
+          <Ta D={D} value={form.physicalLimits} onChange={v=>F("physicalLimits",v)} placeholder="Anything Ram should account for when programming your exercises, or 'None' if not applicable" rows={3}/>
         </GCard>
       </>}
 
@@ -1771,35 +1981,35 @@ function OnboardingScreen({D,onComplete}) {
           <Ta D={D} value={form.goal} onChange={v=>F("goal",v)} placeholder="What are you here to achieve? Fat loss, strength, a wedding deadline, general health..." rows={3}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Target Timeline</SL>
+          <SL D={D}>Target Timeline *</SL>
           <Ti D={D} value={form.targetTimeline} onChange={v=>F("targetTimeline",v)} placeholder="e.g. 6 months, before a wedding in March, no fixed deadline"/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>What's motivating you right now to change?</SL>
+          <SL D={D}>What's motivating you right now to change? *</SL>
           <Ta D={D} value={form.motivation} onChange={v=>F("motivation",v)} placeholder="Health scare, energy levels, an event, your kids, career confidence — what's the trigger right now?" rows={3}/>
         </GCard>
         <GCard D={D} style={{marginBottom:12}}>
-          <SL D={D}>Biggest Obstacle In The Past</SL>
+          <SL D={D}>Biggest Obstacle In The Past *</SL>
           <Ta D={D} value={form.obstacle} onChange={v=>F("obstacle",v)} placeholder="What's derailed you before? Travel, consistency, motivation, plateaus..." rows={3}/>
         </GCard>
         <GCard D={D} style={{background:D.c3,border:`1.5px solid ${D.acc}30`}}>
-          <div style={{fontSize:10,color:D.acc,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:8}}>Your Real WHY</div>
+          <div style={{fontSize:10,color:D.acc,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:8}}>Your Real WHY *</div>
           <div style={{fontSize:12,color:D.ts,lineHeight:1.6,marginBottom:10}}>This is the most important answer in this form. Go beyond the goal — what will change in your life, your relationships, your confidence when you achieve this?</div>
           <Ta D={D} value={form.why||""} onChange={v=>F("why",v)} placeholder="e.g. I want the energy to play with my kids without getting breathless. I want to feel like myself again in formal clothes. I don't want to be the unhealthy one in the room anymore..." rows={4}/>
         </GCard>
       </>}
       {step===7 && <>
         <div style={{background:D.amG,borderRadius:12,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.brd}`}}>
-          <div style={{fontSize:11,color:D.ts,lineHeight:1.5}}>Use a measuring tape. Measure in the morning before eating. Waist is mandatory — all others are optional but recommended.</div>
+          <div style={{fontSize:11,color:D.ts,lineHeight:1.5}}>Use a measuring tape. Measure in the morning before eating. <strong style={{color:D.t}}>All measurements are mandatory (*).</strong></div>
         </div>
         {[
-          {k:"mArms",l:"Arms",guide:"Flexed bicep, widest point, mid-upper arm"},
+          {k:"mArms",l:"Arms *",guide:"Flexed bicep, widest point, mid-upper arm"},
           {k:"mWaist",l:"Waist *",guide:"Belly button level, normal exhale, relaxed"},
-          {k:"mQuads",l:"Quads",guide:"Upper thigh, widest point, standing straight"},
-          {k:"mChest",l:"Chest",guide:"Nipple line, normal breath, arms down"},
-          {k:"mShoulders",l:"Shoulders",guide:"Widest point across both deltoids"},
-          {k:"mHips",l:"Hips",guide:"Widest point around the buttocks"},
-          {k:"mNeck",l:"Neck",guide:"Just below the Adam's apple, level all around"},
+          {k:"mQuads",l:"Quads *",guide:"Upper thigh, widest point, standing straight"},
+          {k:"mChest",l:"Chest *",guide:"Nipple line, normal breath, arms down"},
+          {k:"mShoulders",l:"Shoulders *",guide:"Widest point across both deltoids"},
+          {k:"mHips",l:"Hips *",guide:"Widest point around the buttocks"},
+          {k:"mNeck",l:"Neck *",guide:"Just below the Adam's apple, level all around"},
         ].map(({k,l,guide})=>(
           <GCard key={k} D={D} style={{marginBottom:10}}>
             <div style={{fontSize:13,color:D.t,fontWeight:600,marginBottom:2}}>{l} ({form.measUnit})</div>
@@ -2004,10 +2214,23 @@ export default function App() {
     loadData();
   };
 
-  const notifs=[
-    ...(plans.nutrition?[{t:"Nutrition plan is ready",s:"Ram just pushed your new meal plan — check My Profile.",i:Ic.SaladBowl,c:D.g}]:[]),
-    ...(plans.workout?[{t:"Training plan is ready",s:"Ram just pushed your new workout programme — check My Profile.",i:Ic.Dumbbell,c:D.pur}]:[]),
-    {t:"Measurement day tomorrow",s:"Have your weekly photos and measurements ready.",i:Ic.History,c:D.am},
+  // Dynamic notification schedule:
+  const dayCount = CLI.dayNo;
+  const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
+  const isMeasDay = daysUntilMeas === 0;
+  const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
+
+  const daysUntilPhoto = ((14 - ((dayCount - 1) % 14)) % 14);
+  const isPhotoDay = daysUntilPhoto === 0;
+  const showPhotoReminder = !isPhotoDay && daysUntilPhoto <= 3;
+
+  const notifs = [
+    ...(plans.nutrition ? [{ t: "Nutrition plan is ready", s: "Ram just pushed your new meal plan — check My Profile.", i: Ic.SaladBowl, c: D.g }] : []),
+    ...(plans.workout ? [{ t: "Exercise plan is ready", s: "Ram just pushed your new workout programme — check My Profile.", i: Ic.Dumbbell, c: D.pur }] : []),
+    ...(isMeasDay ? [{ t: "Weekly Measurements Due Today!", s: "Please log all 7 measurements with today's check-in.", i: Ic.History, c: D.am }] : []),
+    ...(showMeasReminder ? [{ t: `Measurement Day in ${daysUntilMeas} Day${daysUntilMeas > 1 ? "s" : ""}`, s: `Have your measuring tape ready for Day ${dayCount + daysUntilMeas}.`, i: Ic.History, c: D.am }] : []),
+    ...(isPhotoDay ? [{ t: "Progress Photos Due Today!", s: "Bi-weekly photos are due today (Front, Side, Back).", i: Ic.Camera, c: D.pur }] : []),
+    ...(showPhotoReminder ? [{ t: `Progress Photos in ${daysUntilPhoto} Day${daysUntilPhoto > 1 ? "s" : ""}`, s: `Bi-weekly photos due in ${daysUntilPhoto} days. Empty stomach, morning.`, i: Ic.Camera, c: D.pur }] : [])
   ];
 
   if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onCoach={()=>setStage("coach")}/>;

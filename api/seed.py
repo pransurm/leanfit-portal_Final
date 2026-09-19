@@ -209,6 +209,42 @@ def seed_database():
     }, merge=True)
     print("  ✓ Seeded client: Gaurav (Paused)")
 
+    # 6. Client: Adesh
+    adesh_ref = db.collection("clients").document("adesh")
+    adesh_ref.set({
+        "name": "Adesh",
+        "initials": "AD",
+        "email": "adesh@leanfit.io",
+        "phase": "Phase I",
+        "week": 1,
+        "startDate": "19-09-2026",
+        "endDate": "19-03-2027",
+        "startW": 94.0,
+        "startWLbs": 207.2,
+        "latestW": 94.0,
+        "height": 178.0,
+        "heightInches": 70.1,
+        "city": "Mumbai",
+        "prog": "LeanFit 6-Month Transformation",
+        "coachStepsGoal": 8000,
+        "weightUnit": "kg",
+        "measUnit": "cm",
+        "status": "active",
+        "adherence": {"meals": 100, "steps": 100, "water": 100, "vitamins": 100, "overall": 100},
+        "checkedIn": False,
+        "streak": 1,
+        "latestMeals": 5,
+        "latestSteps": 8000,
+        "latestWater": 3.0,
+        "latestStress": 3,
+        "latestEnergy": 8,
+        "daysSince": 0,
+        "coachNote": "Initial baseline weight 94 kg. Focus on fat loss & recomposition.",
+        "trafficLight": "g",
+        "createdAt": datetime.now(timezone.utc).isoformat()
+    }, merge=True)
+    print("  ✓ Seeded client: Adesh (94 kg)")
+
     print("\n✅ Seeding complete!")
 
 if __name__ == "__main__":

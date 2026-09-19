@@ -414,7 +414,26 @@ def save_onboarding(payload: Dict[str, Any] = Body(...), user: AuthenticatedUser
         updates["weightUnit"] = payload["weightUnit"]
     if "height" in payload:
         try:
-            updates["height"] = float(payload["height"])
+            h = float(payload["height"])
+            if payload.get("measUnit") == "inches":
+                updates["heightInches"] = h
+                updates["height"] = round(h * 2.54, 1)
+            else:
+                updates["height"] = h
+                updates["heightInches"] = round(h / 2.54, 1)
+        except (ValueError, TypeError):
+            pass
+    if "weight" in payload:
+        try:
+            w = float(payload["weight"])
+            if payload.get("weightUnit") == "lbs":
+                updates["startWLbs"] = w
+                updates["startW"] = round(w * 0.453592, 2)
+                updates["latestW"] = round(w * 0.453592, 2)
+            else:
+                updates["startW"] = w
+                updates["latestW"] = w
+                updates["startWLbs"] = round(w * 2.20462, 1)
         except (ValueError, TypeError):
             pass
 
