@@ -358,7 +358,7 @@ function validateCheckIn(form, isMeasDay, measForm) {
 }
 
 /* ═══ CHECK-IN SCREEN (V6) ═══════════════════════════════════ */
-function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measUnit}) {
+function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measUnit, clientProfile}) {
   const [form, setForm] = useState({w:"",e:7,sl:7,st:3,steps:"",wrk:null,water:2.5,meals:null,mealNote:"",multi:null,bed:"23:00",wake:"07:00",note:""});
   const [pendingUnit, setPendingUnit] = useState("kg");
   const [measForm, setMeasForm] = useState({mArms:"",mWaist:"",mQuads:"",mChest:"",mShoulders:"",mHips:"",mNeck:""});
@@ -373,7 +373,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   // - Body measurements every 7 days (e.g. Day 8, 15, 22...)
   // - Progress photos every 14 days (e.g. Day 15, 29, 43...)
   // - Reminders appear 3 days prior to due day
-  const dayCount = CLI.dayNo;
+  const dayCount = clientProfile?.dayNo || (data.length + 1);
   const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
   const isMeasDay = daysUntilMeas === 0;
   const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
@@ -385,15 +385,17 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   const [showPhotoSection, setShowPhotoSection] = useState(isPhotoDay);
 
   const unit = weightUnit||pendingUnit;
-  const startDisp = toUnit(CLI.startW, unit);
-  const daysIntoWeek = (CLI.dayNo-1)%7; // 0 = first day of a new week → workout count resets
+  const startW = clientProfile?.startW || CLI.startW;
+  const startDisp = toUnit(startW, unit);
+  const daysIntoWeek = (dayCount - 1) % 7; // 0 = first day of a new week → workout count resets
   const thisWeekData = daysIntoWeek>0 ? data.slice(-daysIntoWeek) : [];
   const weekWorkouts = thisWeekData.length>0?Math.max(...thisWeekData.map(d=>d.wrk??0)):0;
-  const diff = form.w?+(CLI.startW-fromUnit(form.w,unit)).toFixed(2):null;
+  const diff = form.w?+(startW-fromUnit(form.w,unit)).toFixed(2):null;
+  const curWeek = clientProfile?.week || Math.max(1, Math.ceil(dayCount / 7));
   const effUnit = measUnit||"cm";
   const waistCm = effUnit==="inches"?+(+measForm.mWaist*2.54).toFixed(1):measForm.mWaist;
   const neckCm  = effUnit==="inches"?+(+measForm.mNeck*2.54).toFixed(1):measForm.mNeck;
-  const autoBF  = calcBF(waistCm,neckCm,CLI.height);
+  const autoBF  = calcBF(waistCm,neckCm,clientProfile?.height || CLI.height);
 
   const submit = async () => {
     const errs = validateCheckIn(form, isMeasDay, measForm);
@@ -434,7 +436,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
     if ((isMeasDay || showMeasSection) && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front)) {
       try {
         await submitMeasurement({
-          week: CLI.week,
+          week: curWeek,
           date: fullDate,
           arms: measForm.mArms ? +measForm.mArms : null,
           waist: measForm.mWaist ? +measForm.mWaist : null,
@@ -460,7 +462,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
         <div style={{width:72,height:72,borderRadius:"50%",background:D.gG,border:`2px solid ${D.g}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",animation:"popIn 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>
           <Ic.Check c={D.g} sz={32}/>
         </div>
-        <div style={{fontSize:13,color:D.ts,marginBottom:6}}>Day {CLI.dayNo} · {CLI.phase} · {new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</div>
+        <div style={{fontSize:13,color:D.ts,marginBottom:6}}>Day {dayCount} · {clientProfile?.phase || "Phase I"} · {new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</div>
         <div style={{fontSize:22,fontWeight:900,color:D.t,letterSpacing:"-0.5px"}}>Check-In Logged!</div>
         <div style={{fontSize:13,color:D.ts,marginTop:6}}>That consistency is exactly what compounds into results.</div>
       </div>
@@ -687,37 +689,41 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
 }
 
 /* ═══ DASHBOARD (V6 — updated adherence + fixed arc) ═════════ */
-function Dashboard({D, data, weightUnit}) {
+function Dashboard({D, data, weightUnit, clientProfile}) {
   const [cf,setCf]=useState("2W");
   const fd=filterData(data,cf);
   const last=data[data.length-1];
-  const bestW=Math.min(...data.map(d=>d.w));
-  const totalLost=+(CLI.startW-bestW).toFixed(2);
-  const phasePct=Math.round((CLI.week/CLI.phaseWeeks)*100);
+  const bestW=data.length>0?Math.min(...data.map(d=>d.w)):(clientProfile?.startW||CLI.startW);
+  const startW=clientProfile?.startW || CLI.startW;
+  const totalLost=+(startW-bestW).toFixed(2);
+  const curWeek = clientProfile?.week || Math.max(1, Math.ceil(Math.max(1, data.length) / 7));
+  const totalWeeks = clientProfile?.phaseWeeks || 12;
+  const phasePct=Math.round((curWeek/totalWeeks)*100);
   const arcLen=Math.PI*80; const arcFill=(phasePct/100)*arcLen;
   const unit=weightUnit||"kg";
-  const adh=calcAdh(data, CLI.coachStepsGoal);
+  const stepsGoal = clientProfile?.coachStepsGoal || CLI.coachStepsGoal;
+  const adh=calcAdh(data, stepsGoal);
   const chartData=fd.map(d=>({...d,w:toUnit(d.w,unit)}));
   const TT2=TT({D});
 
   return <div style={{padding:"16px 14px 24px"}}>
-    <div style={{marginBottom:16}}><div style={{fontSize:9.5,color:D.acc,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>{CLI.phase} · Week {CLI.week} of {CLI.phaseWeeks}</div><div style={{fontSize:21,fontWeight:900,color:D.t}}>Progress Dashboard</div></div>
+    <div style={{marginBottom:16}}><div style={{fontSize:9.5,color:D.acc,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>{clientProfile?.phase || "Phase I"} · Week {curWeek} of {totalWeeks}</div><div style={{fontSize:21,fontWeight:900,color:D.t}}>Progress Dashboard</div></div>
 
     {/* Phase arc — thick rounded ring, reference style */}
     <GCard D={D} glowColor={D.gG} style={{marginBottom:12,textAlign:"center",padding:20}}>
-      <SL D={D}>Phase Progress — {CLI.phase}</SL>
+      <SL D={D}>Phase Progress — {clientProfile?.phase || "Phase I"}</SL>
       <svg width="200" height="130" viewBox="0 0 200 130" style={{display:"block",margin:"0 auto"}}>
         <path d="M 20 108 A 80 80 0 0 1 180 108" fill="none" stroke={D.dark?"rgba(255,255,255,0.08)":D.brd} strokeWidth="16" strokeLinecap="round"/>
         <path d="M 20 108 A 80 80 0 0 1 180 108" fill="none" stroke={D.g} strokeWidth="16" strokeLinecap="round" strokeDasharray={`${arcFill} ${arcLen}`}/>
         {/* WEEK label + number with clear space */}
         <text x="100" y="82" textAnchor="middle" fill={D.ts} fontSize="9" fontWeight="600" letterSpacing="2" style={{fontFamily:"-apple-system,system-ui"}}>WEEK</text>
-        <text x="100" y="106" textAnchor="middle" fill={D.t} fontSize="28" fontWeight="900" style={{fontFamily:"-apple-system,system-ui"}}>{CLI.week}</text>
+        <text x="100" y="106" textAnchor="middle" fill={D.t} fontSize="28" fontWeight="900" style={{fontFamily:"-apple-system,system-ui"}}>{curWeek}</text>
         {/* Legends inside viewBox */}
         <text x="16" y="126" textAnchor="start" fill={D.tm} fontSize="9">Wk 1</text>
-        <text x="184" y="126" textAnchor="end" fill={D.tm} fontSize="9">Wk {CLI.phaseWeeks}</text>
+        <text x="184" y="126" textAnchor="end" fill={D.tm} fontSize="9">Wk {totalWeeks}</text>
       </svg>
       <div style={{display:"flex",justifyContent:"center",gap:20,marginTop:4}}>
-        {[{v:`↓ ${toUnit(totalLost,unit)} ${unit}`,l:"Best Loss",c:D.g},{v:`${data.length}`,l:"Check-Ins",c:D.am},{v:`${Math.round(data.reduce((s,d)=>s+d.steps,0)/Math.max(1,data.length)).toLocaleString()}`,l:"Avg Steps",c:D.pur}].map(s=>(
+        {[{v:`↓ ${toUnit(totalLost,unit)} ${unit}`,l:"Best Loss",c:D.g},{v:`${data.length}`,l:"Check-Ins",c:D.am},{v:`${Math.round((data.reduce((s,d)=>s+d.steps,0))/Math.max(1,data.length)).toLocaleString()}`,l:"Avg Steps",c:D.pur}].map(s=>(
           <div key={s.l} style={{textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:s.c}}>{s.v}</div><div style={{fontSize:9,color:D.ts,fontWeight:600,letterSpacing:0.8,textTransform:"uppercase",marginTop:2}}>{s.l}</div></div>
         ))}
       </div>
@@ -725,9 +731,9 @@ function Dashboard({D, data, weightUnit}) {
 
     {/* Phase timeline */}
     <GCard D={D} style={{marginBottom:12,padding:14}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div style={{fontSize:11,color:D.t,fontWeight:600}}>Phase Timeline</div><div style={{fontSize:10,color:D.acc,fontWeight:700}}>Week {CLI.week} of {CLI.phaseWeeks}</div></div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div style={{fontSize:11,color:D.t,fontWeight:600}}>Phase Timeline</div><div style={{fontSize:10,color:D.acc,fontWeight:700}}>Week {curWeek} of {totalWeeks}</div></div>
       <div style={{height:6,background:D.brd,borderRadius:3,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:`${phasePct}%`,background:`linear-gradient(90deg,${D.acc},${D.g})`,borderRadius:3}}/></div>
-      <div style={{display:"flex",justifyContent:"space-between"}}>{[0,4,8,12].filter(i=>i<=CLI.phaseWeeks).map(i=><div key={i} style={{textAlign:"center"}}><div style={{width:1,height:4,background:D.brd,margin:"0 auto 3px"}}/><div style={{fontSize:8,color:i<=CLI.week?D.acc:D.tm,fontWeight:i===CLI.week?700:400}}>W{i}</div></div>)}</div>
+      <div style={{display:"flex",justifyContent:"space-between"}}>{[0,4,8,12].filter(i=>i<=totalWeeks).map(i=><div key={i} style={{textAlign:"center"}}><div style={{width:1,height:4,background:D.brd,margin:"0 auto 3px"}}/><div style={{fontSize:8,color:i<=curWeek?D.acc:D.tm,fontWeight:i===curWeek?700:400}}>W{i}</div></div>)}</div>
     </GCard>
 
     {/* Adherence — 4 metrics + weights */}
@@ -764,14 +770,14 @@ function Dashboard({D, data, weightUnit}) {
 
     {/* Steps */}
     <GCard D={D} style={{marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><SL D={D} color={D.pur}>Daily Steps</SL><div style={{fontSize:10,color:D.g}}>— {CLI.coachStepsGoal.toLocaleString()} goal</div></div>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><SL D={D} color={D.pur}>Daily Steps</SL><div style={{fontSize:10,color:D.g}}>— {stepsGoal.toLocaleString()} goal</div></div>
       <FilterBar D={D} value={cf} onChange={setCf}/>
       <ResponsiveContainer width="100%" height={110}>
         <BarChart data={fd} margin={{top:2,right:2,bottom:0,left:-30}}>
           <defs><linearGradient id="stG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={D.pur} stopOpacity={0.9}/><stop offset="100%" stopColor={D.pur} stopOpacity={0.4}/></linearGradient></defs>
           <XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis tick={{fontSize:9,fill:D.tm}}/>
-          <Tooltip content={<TT2/>}/><ReferenceLine y={CLI.coachStepsGoal} stroke={D.g} strokeDasharray="5 5" strokeWidth={1.5}/>
-          <Bar dataKey="steps" radius={[4,4,0,0]} name="Steps">{fd.map((d,i)=><Cell key={i} fill={d.steps>=CLI.coachStepsGoal?D.g:D.pur} opacity={0.85}/>)}</Bar>
+          <Tooltip content={<TT2/>}/><ReferenceLine y={stepsGoal} stroke={D.g} strokeDasharray="5 5" strokeWidth={1.5}/>
+          <Bar dataKey="steps" radius={[4,4,0,0]} name="Steps">{fd.map((d,i)=><Cell key={i} fill={d.steps>=stepsGoal?D.g:D.pur} opacity={0.85}/>)}</Bar>
         </BarChart>
       </ResponsiveContainer>
     </GCard>
@@ -1401,28 +1407,64 @@ function BodyScreen({D}) {
   </div>;
 }
 
-function WinsScreen({D}) {
-  const [text,setText]=useState(""); const [wins,setWins]=useState(WINS_D);
+function WinsScreen({D, clientProfile}) {
+  const [text,setText]=useState(""); const [wins,setWins]=useState([]);
+  const curWeek = clientProfile?.week || 1;
   return <div style={{padding:"16px 14px 24px"}}>
     <div style={{marginBottom:16}}><div style={{fontSize:9.5,color:D.am,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Weekly Reflection</div><div style={{fontSize:21,fontWeight:900,color:D.t}}>Your Wins</div></div>
-    <GCard D={D} glowColor={D.amG} style={{marginBottom:16}}><SL D={D} color={D.am}>This Week — Week {CLI.week+1}</SL>
+    <GCard D={D} glowColor={D.amG} style={{marginBottom:16}}><SL D={D} color={D.am}>This Week — Week {curWeek}</SL>
       <div style={{fontSize:12,color:D.ts,marginBottom:12,lineHeight:1.7}}>What did you achieve this week? Any win counts — a workout completed, a food choice, better sleep, more energy.</div>
       <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="e.g. Hit 10k steps on Thursday. Resisted dessert. Energy consistent all week..." style={{width:"100%",background:D.inp,border:`1.5px solid ${text?D.am:D.inpBrd}`,borderRadius:12,padding:12,fontSize:13,color:D.t,outline:"none",resize:"vertical",minHeight:100,lineHeight:1.6,fontFamily:"-apple-system,system-ui,sans-serif",boxSizing:"border-box"}}/>
-      <button onClick={()=>{if(text.trim()){setWins(w=>[{week:CLI.week+1,date:"21 Sep 2026",emoji:"⭐",text},...w]);setText("");}}} style={{marginTop:10,width:"100%",padding:12,background:D.amG,border:`1px solid ${D.am}50`,borderRadius:10,color:D.am,fontWeight:700,fontSize:13,cursor:"pointer"}}>Submit This Week's Wins</button>
+      <button onClick={()=>{if(text.trim()){const todayStr=new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});setWins(w=>[{week:curWeek,date:todayStr,emoji:"⭐",text},...w]);setText("");}}} style={{marginTop:10,width:"100%",padding:12,background:D.amG,border:`1px solid ${D.am}50`,borderRadius:10,color:D.am,fontWeight:700,fontSize:13,cursor:"pointer"}}>Submit This Week's Wins</button>
     </GCard>
     <GCard D={D} style={{marginBottom:14,padding:"12px 18px",background:D.c3,textAlign:"center"}}><div style={{fontSize:12,color:D.ts,lineHeight:1.7,fontStyle:"italic"}}>"Every win — no matter how small — is proof that your system is working. Log it. Own it. Build on it."</div><div style={{fontSize:10,color:D.am,fontWeight:700,marginTop:8,letterSpacing:1}}>— Ram Dixit</div></GCard>
-    {wins.map((w,i)=><GCard key={i} D={D} style={{marginBottom:10,padding:18}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div style={{display:"flex",gap:10,alignItems:"center"}}><span style={{fontSize:24}}>{w.emoji}</span><div><div style={{fontSize:14,fontWeight:700,color:D.t}}>Week {w.week}</div><div style={{fontSize:11,color:D.ts}}>{w.date}</div></div></div><div style={{background:D.amG,border:`1px solid ${D.am}44`,borderRadius:20,padding:"3px 10px",fontSize:9,color:D.am,fontWeight:700}}>WINS</div></div><div style={{fontSize:13,color:D.ts,lineHeight:1.7,borderTop:`1px solid ${D.brd}`,paddingTop:10}}>{w.text}</div></GCard>)}
+    {wins.length===0 ? (
+      <GCard D={D} style={{textAlign:"center",padding:28}}>
+        <div style={{fontSize:28,marginBottom:8}}>🏆</div>
+        <div style={{fontSize:14,fontWeight:700,color:D.t,marginBottom:4}}>No wins logged yet</div>
+        <div style={{fontSize:12,color:D.ts,lineHeight:1.6}}>Log your personal milestones, non-scale victories, and achievements above to track your weekly progress!</div>
+      </GCard>
+    ) : (
+      wins.map((w,i)=><GCard key={i} D={D} style={{marginBottom:10,padding:18}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div style={{display:"flex",gap:10,alignItems:"center"}}><span style={{fontSize:24}}>{w.emoji}</span><div><div style={{fontSize:14,fontWeight:700,color:D.t}}>Week {w.week}</div><div style={{fontSize:11,color:D.ts}}>{w.date}</div></div></div><div style={{background:D.amG,border:`1px solid ${D.am}44`,borderRadius:20,padding:"3px 10px",fontSize:9,color:D.am,fontWeight:700}}>WINS</div></div><div style={{fontSize:13,color:D.ts,lineHeight:1.7,borderTop:`1px solid ${D.brd}`,paddingTop:10}}>{w.text}</div></GCard>)
+    )}
   </div>;
 }
 
-function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingData,setOnboardingData,plans}) {
+function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingData,setOnboardingData,plans,clientProfile}) {
   const [profilePic,setProfilePic]=useState(null); const [copied,setCopied]=useState(false); const fileRef=useRef(null);
   const [sub,setSub]=useState(null); // null | blood | photos | onboarding | history | nutrition | workout
   const handlePic=(e)=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>setProfilePic(ev.target.result);r.readAsDataURL(f);}};
   const shareMsg=`Hey! I've been training with Ram Dixit at LeanFit for a while now and honestly it's the first programme that's actually worked for me — daily check-ins, real accountability, a coach who actually looks at your numbers. If you've been thinking about getting serious about your fitness, you should check it out: ${REFERRAL_URL}\n\nOr if you'd rather just talk it through first, you can grab a slot on Ram's calendar here: ${CALENDLY_LINK}`;
   const shareLink=()=>{if(navigator.share)navigator.share({title:"LeanFit Coaching with Ram Dixit",text:shareMsg});else{navigator.clipboard.writeText(shareMsg).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});}};
-  const start=new Date("2026-09-01"); const end=new Date(start); end.setDate(end.getDate()+CLI.phaseWeeks*7); const renewal=new Date(end); renewal.setDate(renewal.getDate()-7);
-  const fmt=d=>d.toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
+  
+  const clientName = clientProfile?.name || "Client";
+  const clientProg = clientProfile?.prog || "LeanFit 6-Month Transformation";
+  const phaseStr = clientProfile?.phase || "Phase I: Rebuild";
+  const phaseWeeks = clientProfile?.phaseWeeks || 12;
+  const startW = clientProfile?.startW || (data?.[0]?.weight || 70.0);
+  const curWeek = clientProfile?.week || Math.max(1, Math.ceil(Math.max(1, data.length) / 7));
+
+  const parseProfileDate = (dateStr) => {
+    if (!dateStr) return new Date();
+    if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(dateStr)) {
+      const [d, m, y] = dateStr.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    }
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
+      const [d, m, y] = dateStr.split("/").map(Number);
+      return new Date(y, m - 1, d);
+    }
+    const p = new Date(dateStr);
+    return isNaN(p.getTime()) ? new Date() : p;
+  };
+
+  const start = parseProfileDate(clientProfile?.startDate);
+  const end = new Date(start); 
+  end.setDate(end.getDate() + phaseWeeks * 7); 
+  const renewal = new Date(end); 
+  renewal.setDate(renewal.getDate() - 7);
+  const fmt = d => d.toLocaleDateString("en-IN", {day:"numeric", month:"short", year:"numeric"});
+
   const secs=[
     {key:"nutrition",Icon:Ic.SaladBowl,t:"Nutrition Plan",s:plans?.nutrition?"Your personalised meal plan from Ram":"Not pushed yet — coming from Ram",c:D.g,g:D.gG,locked:!plans?.nutrition},
     {key:"workout",Icon:Ic.Dumbbell,t:"Training Plan",s:plans?.workout?"Your workout programme from Ram":"Not pushed yet — coming from Ram",c:D.pur,g:D.purG,locked:!plans?.workout},
@@ -1437,12 +1479,12 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
   return <div style={{padding:"16px 14px 24px"}}>
     <div style={{textAlign:"center",marginBottom:24}}>
       <div style={{position:"relative",display:"inline-block"}}>
-        {profilePic?<img src={profilePic} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover",border:`3px solid ${D.acc}`,boxShadow:`0 0 24px ${D.accG}`}} alt="profile"/>:<div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${D.accD},${D.acc})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:"white",boxShadow:`0 0 28px ${D.accG}`,margin:"0 auto"}}>{CLI.name[0]}</div>}
+        {profilePic?<img src={profilePic} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover",border:`3px solid ${D.acc}`,boxShadow:`0 0 24px ${D.accG}`}} alt="profile"/>:<div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${D.accD},${D.acc})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:"white",boxShadow:`0 0 28px ${D.accG}`,margin:"0 auto"}}>{(clientName||"C")[0].toUpperCase()}</div>}
         <button onClick={()=>fileRef.current?.click()} style={{position:"absolute",bottom:0,right:0,width:26,height:26,borderRadius:"50%",background:D.acc,border:`2px solid ${D.bg}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><Ic.Camera c="white" sz={12}/></button>
         <input ref={fileRef} type="file" accept="image/*" onChange={handlePic} style={{display:"none"}}/>
       </div>
-      <div style={{fontSize:22,fontWeight:900,color:D.t,marginTop:12,letterSpacing:"-0.5px"}}>{CLI.name}</div>
-      <div style={{fontSize:12,color:D.ts,marginTop:2}}>{CLI.prog}</div>
+      <div style={{fontSize:22,fontWeight:900,color:D.t,marginTop:12,letterSpacing:"-0.5px"}}>{clientName}</div>
+      <div style={{fontSize:12,color:D.ts,marginTop:2}}>{clientProg}</div>
     </div>
     <GCard D={D} style={{marginBottom:12,padding:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${D.brd}`}}>
@@ -1463,7 +1505,7 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
     ))}
     <div style={{fontSize:9.5,color:D.ts,fontWeight:700,letterSpacing:1.8,textTransform:"uppercase",marginBottom:12,marginTop:20}}>Programme Details</div>
     <GCard D={D} style={{marginBottom:12}}>
-      {[["Phase",CLI.phase],["Start Date",CLI.startDate],["Phase I Completion",fmt(end)],["Renewal Date",fmt(renewal)],["Start Weight",`${CLI.startW} kg`],["Current Week",`Week ${CLI.week} of ${CLI.phaseWeeks}`]].map(([l,v])=>(
+      {[["Phase",phaseStr],["Start Date",fmt(start)],["Phase I Completion",fmt(end)],["Renewal Date",fmt(renewal)],["Start Weight",`${startW} ${weightUnit || 'kg'}`],["Current Week",`Week ${curWeek} of ${phaseWeeks}`]].map(([l,v])=>(
         <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${D.brd}`,flexWrap:"wrap",gap:4}}><span style={{fontSize:13,color:D.ts}}>{l}</span><span style={{fontSize:12,fontWeight:700,color:l==="Renewal Date"?D.am:D.t,textAlign:"right"}}>{v}</span></div>
       ))}
     </GCard>
@@ -1823,7 +1865,7 @@ function OnboardingScreen({D,onComplete}) {
             </div>
 
             <div style={{background:D.c2,borderRadius:12,padding:"10px 14px",marginBottom:14,border:`1px solid ${D.brd}`}}>
-              <div style={{fontSize:10,color:D.ts,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:2}}>Tough Password</div>
+              <div style={{fontSize:10,color:D.ts,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:2}}>Password</div>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                 <div style={{fontSize:15,color:D.t,fontWeight:800,fontFamily:"monospace",letterSpacing:showPass?0.5:2}}>
                   {showPass ? createdAccount.password : "••••••••••••••"}
@@ -2296,12 +2338,23 @@ export default function App() {
   const [theme,setTheme]=useState("dark");
   const [stage,setStage]=useState("login");
   const [tab,setTab]=useState("checkin");
-  const [data,setData]=useState(SEED);
+  const [data,setData]=useState([]);
   const [weightUnit,setWeightUnit]=useState(null);
   const [measUnit,setMeasUnit]=useState("cm"); // locked from onboarding
   const [onboardingData,setOnboardingData]=useState(null);
   const [plans,setPlans]=useState({nutrition:null,workout:null});
-  const [clientProfile,setClientProfile]=useState(CLI);
+  const [clientProfile,setClientProfile]=useState({
+    name: "Client",
+    phase: "Phase I: Rebuild",
+    startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+    startW: 70.0,
+    week: 1,
+    dayNo: 1,
+    height: 175,
+    prog: "LeanFit 6-Month Transformation",
+    phaseWeeks: 12,
+    coachStepsGoal: 8000
+  });
   const D=THEMES[theme];
   const toggle=()=>setTheme(t=>t==="dark"?"light":"dark");
   const headerLabel={checkin:`Morning, ${clientProfile.name}`,dashboard:"Progress Dashboard",body:"Body Metrics",wins:"Your Wins",me:"My Profile"}[tab];
@@ -2318,7 +2371,7 @@ export default function App() {
   const loadData = useCallback(async () => {
     try {
       const res = await fetchClientData();
-      if (res.checkins && res.checkins.length > 0) {
+      if (res.checkins) {
         setData(res.checkins);
       }
       if (res.plans) {
@@ -2352,7 +2405,8 @@ export default function App() {
   };
 
   // Dynamic notification schedule:
-  const dayCount = clientProfile.dayNo || CLI.dayNo;
+  const dayCount = data.length + 1;
+  const curWeek = clientProfile.week || Math.max(1, Math.ceil(dayCount / 7));
   const daysUntilMeas = ((7 - ((dayCount - 1) % 7)) % 7);
   const isMeasDay = daysUntilMeas === 0;
   const showMeasReminder = !isMeasDay && daysUntilMeas <= 3;
@@ -2374,6 +2428,7 @@ export default function App() {
   if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={async (f, acc)=>{
     setMeasUnit(f.measUnit||"cm");
     setOnboardingData(f);
+    setData([]);
     if (acc) {
       setClientProfile(p => ({
         ...p,
@@ -2383,7 +2438,12 @@ export default function App() {
         email: acc.email,
         height: acc.height || f.height,
         weightUnit: acc.weightUnit || f.weightUnit || "kg",
-        measUnit: acc.measUnit || f.measUnit || "cm"
+        measUnit: acc.measUnit || f.measUnit || "cm",
+        dayNo: 1,
+        week: 1,
+        phase: "Phase I: Rebuild",
+        phaseWeeks: 12,
+        startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
       }));
       if (acc.weightUnit) setWeightUnit(acc.weightUnit);
       if (acc.measUnit) setMeasUnit(acc.measUnit);
@@ -2399,7 +2459,7 @@ export default function App() {
   return (
     <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",overflow:"hidden",position:"relative"}}>
       <div style={{background:`linear-gradient(135deg,${D.accD},${D.acc})`,padding:"18px 20px 22px",borderRadius:"0 0 26px 26px",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center",boxShadow:`0 6px 18px ${D.accG}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><LFLogo D={{...D,t:"#ffffff",ts:"rgba(255,255,255,0.7)",g:"#c9ef5e"}} compact/><div><div style={{fontSize:9,color:"rgba(255,255,255,0.75)",fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{clientProfile.phase} · Week {clientProfile.week}</div><div style={{fontSize:15,fontWeight:800,color:"#ffffff",marginTop:1}}>{headerLabel}</div></div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><LFLogo D={{...D,t:"#ffffff",ts:"rgba(255,255,255,0.7)",g:"#c9ef5e"}} compact/><div><div style={{fontSize:9,color:"rgba(255,255,255,0.75)",fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{clientProfile.phase || "Phase I"} · Week {curWeek}</div><div style={{fontSize:15,fontWeight:800,color:"#ffffff",marginTop:1}}>{headerLabel}</div></div></div>
         <div style={{display:"flex",alignItems:"center",gap:8,position:"relative"}}>
           <button onClick={()=>setShowNotifs(s=>!s)} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.16)",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",position:"relative"}}>
             <Ic.Bell c="#ffffff" sz={15}/>
@@ -2420,11 +2480,11 @@ export default function App() {
         </div>
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
-        {tab==="checkin"   && <CheckIn   D={D} data={data} setData={setData} onComplete={()=>setTab("dashboard")} weightUnit={weightUnit} setWeightUnit={setWeightUnit} measUnit={measUnit}/>}
-        {tab==="dashboard" && <Dashboard D={D} data={data} weightUnit={weightUnit}/>}
+        {tab==="checkin"   && <CheckIn   D={D} data={data} setData={setData} onComplete={()=>setTab("dashboard")} weightUnit={weightUnit} setWeightUnit={setWeightUnit} measUnit={measUnit} clientProfile={clientProfile}/>}
+        {tab==="dashboard" && <Dashboard D={D} data={data} weightUnit={weightUnit} clientProfile={clientProfile}/>}
         {tab==="body"      && <BodyScreen D={D}/>}
-        {tab==="wins"      && <WinsScreen D={D}/>}
-        {tab==="me"        && <MeScreen   D={D} theme={theme} toggleTheme={toggle} weightUnit={weightUnit} setWeightUnit={setWeightUnit} data={data} onboardingData={onboardingData} setOnboardingData={setOnboardingData} plans={plans}/>}
+        {tab==="wins"      && <WinsScreen D={D} clientProfile={clientProfile}/>}
+        {tab==="me"        && <MeScreen   D={D} theme={theme} toggleTheme={toggle} weightUnit={weightUnit} setWeightUnit={setWeightUnit} data={data} onboardingData={onboardingData} setOnboardingData={setOnboardingData} plans={plans} clientProfile={clientProfile}/>}
       </div>
       <BottomNav D={D} tab={tab} setTab={setTab}/>
     </div>
