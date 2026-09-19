@@ -1437,7 +1437,9 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
   const shareMsg=`Hey! I've been training with Ram Dixit at LeanFit for a while now and honestly it's the first programme that's actually worked for me — daily check-ins, real accountability, a coach who actually looks at your numbers. If you've been thinking about getting serious about your fitness, you should check it out: ${REFERRAL_URL}\n\nOr if you'd rather just talk it through first, you can grab a slot on Ram's calendar here: ${CALENDLY_LINK}`;
   const shareLink=()=>{if(navigator.share)navigator.share({title:"LeanFit Coaching with Ram Dixit",text:shareMsg});else{navigator.clipboard.writeText(shareMsg).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});}};
   
-  const clientName = clientProfile?.name || "Client";
+  const clientName = (clientProfile?.name && clientProfile.name !== "Client") 
+    ? clientProfile.name 
+    : (auth.currentUser?.displayName || (auth.currentUser?.email ? auth.currentUser.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Pranshur"));
   const clientProg = clientProfile?.prog || "LeanFit 6-Month Transformation";
   const phaseStr = clientProfile?.phase || "Phase I: Rebuild";
   const phaseWeeks = clientProfile?.phaseWeeks || 12;
@@ -2369,7 +2371,7 @@ export default function App() {
   const [onboardingData,setOnboardingData]=useState(null);
   const [plans,setPlans]=useState({nutrition:null,workout:null});
   const [clientProfile,setClientProfile]=useState({
-    name: "Client",
+    name: "Pranshur",
     phase: "Phase I: Rebuild",
     startDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
     startW: 70.0,
@@ -2408,7 +2410,10 @@ export default function App() {
       if (res.client) {
         if (res.client.weightUnit) setWeightUnit(res.client.weightUnit);
         if (res.client.measUnit) setMeasUnit(res.client.measUnit);
-        if (res.client.name) setClientProfile(p => ({ ...p, ...res.client }));
+        const resolvedName = (res.client.name && res.client.name !== "Client")
+          ? res.client.name
+          : (auth.currentUser?.displayName || (auth.currentUser?.email ? auth.currentUser.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Pranshur"));
+        setClientProfile(p => ({ ...p, ...res.client, name: resolvedName }));
       }
     } catch (err) {
       console.warn("Client data sync:", err.message);

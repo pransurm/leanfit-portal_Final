@@ -151,10 +151,32 @@ def get_client_data(user: AuthenticatedUser = Depends(get_current_user)):
     client_ref = db.collection("clients").document(client_id)
     client_doc = client_ref.get()
 
+    if not client_doc.exists and user.email:
+        # Fallback: look up clients collection by email
+        matches = list(db.collection("clients").where("email", "==", user.email.lower()).limit(1).stream())
+        if matches:
+            client_doc = matches[0]
+            client_id = client_doc.id
+            client_ref = db.collection("clients").document(client_id)
+            # Self-heal: Link users/{uid} to this clientId
+            try:
+                db.collection("users").document(user.uid).set({
+                    "uid": user.uid,
+                    "email": user.email,
+                    "clientId": client_id,
+                    "role": "client"
+                }, merge=True)
+            except Exception:
+                pass
+
     if not client_doc.exists:
-        # Return sensible defaults if document not yet initialized
+        # Determine fallback name from user email or name
+        name = "Pranshur"
+        if user.email:
+            prefix = user.email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            name = prefix or "Pranshur"
         return {
-            "client": {"id": client_id, "name": "Client", "phase": "Phase I", "week": 1, "coachStepsGoal": 8000},
+            "client": {"id": client_id, "name": name, "phase": "Phase I", "week": 1, "coachStepsGoal": 8000},
             "checkins": [],
             "measurements": [],
             "wins": [],
