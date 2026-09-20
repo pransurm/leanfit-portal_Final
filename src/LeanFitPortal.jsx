@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect, Component } from "react";
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { 
   fetchMe,
@@ -22,6 +22,17 @@ import {
 import { auth, loginWithEmail, logoutUser } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { LOGO_HIGHRES } from "./logo_base64";
+
+export function getAdherencePct(adh) {
+  if (adh === null || adh === undefined) return 0;
+  if (typeof adh === "number") return adh;
+  if (typeof adh === "object") {
+    if (typeof adh.overall === "number") return adh.overall;
+    if (typeof adh.meals === "number") return adh.meals;
+  }
+  const parsed = parseFloat(adh);
+  return isNaN(parsed) ? 0 : Math.round(parsed);
+}
 
 /* ═══ THEMES ═══════════════════════════════════════════════ */
 const THEMES = {
@@ -61,15 +72,17 @@ function calcAdh(data, stepsGoal) {
   return {meals,steps,water,vitamins,overall};
 }
 function clientAlerts(c) {
+  if (!c) return [];
   const a=[];
+  const daysSince = c.daysSince ?? 0;
   if (c.status==="paused") a.push({lvl:"am",msg:"Programme paused"});
-  else if (c.daysSince>=2) a.push({lvl:"r",msg:`${c.daysSince} days without check-in`});
+  else if (daysSince>=2) a.push({lvl:"r",msg:`${daysSince} days without check-in`});
   else if (!c.checkedIn) a.push({lvl:"am",msg:"Not checked in today"});
-  if (c.latestMeals<=2) a.push({lvl:"am",msg:`Meals ${c.latestMeals}/5`});
+  if (c.latestMeals != null && c.latestMeals<=2) a.push({lvl:"am",msg:`Meals ${c.latestMeals}/5`});
   const stepsGoal = c.coachStepsGoal || 8000;
-  if (c.latestSteps < stepsGoal*0.5) a.push({lvl:"am",msg:`Steps very low (${c.latestSteps})`});
-  if (c.latestStress>=8) a.push({lvl:"am",msg:`Stress ${c.latestStress}/10`});
-  if (c.latestWater<1.5) a.push({lvl:"am",msg:"Hydration critical"});
+  if (c.latestSteps != null && c.latestSteps < stepsGoal*0.5) a.push({lvl:"am",msg:`Steps very low (${c.latestSteps})`});
+  if (c.latestStress != null && c.latestStress>=8) a.push({lvl:"am",msg:`Stress ${c.latestStress}/10`});
+  if (c.latestWater != null && c.latestWater<1.5) a.push({lvl:"am",msg:"Hydration critical"});
   return a;
 }
 /* DRAFT traffic-light classification — starting point only, to be refined together.
@@ -77,9 +90,13 @@ function clientAlerts(c) {
    Yellow: check-ins/adherence slipping but still engaged.
    Red: barely or not checking in, no real progress, effectively inactive. */
 function trafficLight(c) {
+  if (!c) return "am";
   if (c.status==="paused") return "am";
-  if (c.daysSince>=3 || c.streak===0 || c.adherence<45) return "r";
-  if (c.daysSince>=1 || c.adherence<75 || c.streak<4) return "am";
+  const adh = getAdherencePct(c.adherence);
+  const daysSince = c.daysSince ?? 0;
+  const streak = c.streak ?? 0;
+  if (daysSince>=3 || streak===0 || adh<45) return "r";
+  if (daysSince>=1 || adh<75 || streak<4) return "am";
   return "g";
 }
 const TL_LABEL={g:"Green",am:"Yellow",r:"Red"};
@@ -822,14 +839,14 @@ function CoachDashboard({D, theme, toggleTheme, onBack, plans, setPlans}) {
   const active=clients.filter(c=>c.status==="active").length;
   const checkedIn=clients.filter(c=>c.checkedIn&&c.status==="active").length;
   const needsAttn=clients.filter(c=>clientAlerts(c).length>0).length;
-  const avgAdh=Math.round(clients.filter(c=>c.status==="active").reduce((s,c)=>s+c.adherence,0)/Math.max(1,active));
+  const avgAdh=Math.round(clients.filter(c=>c.status==="active").reduce((s,c)=>s+getAdherencePct(c.adherence),0)/Math.max(1,active));
   const tlCounts={g:clients.filter(c=>trafficLight(c)==="g").length,am:clients.filter(c=>trafficLight(c)==="am").length,r:clients.filter(c=>trafficLight(c)==="r").length};
 
   // Priority sort: critical first
   const sorted=[...clients].filter(c=>tlFilter==="all"||trafficLight(c)===tlFilter).sort((a,b)=>{
     const aAlerts=clientAlerts(a).length, bAlerts=clientAlerts(b).length;
     if(aAlerts!==bAlerts) return bAlerts-aAlerts;
-    return b.adherence-a.adherence;
+    return getAdherencePct(b.adherence)-getAdherencePct(a.adherence);
   });
 
   // Alert color helpers
@@ -1000,7 +1017,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
 
           {/* Overview stats */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-            {[{v:`${c.startW} kg`,l:"Start Weight",c:D.ts},{v:`${c.latestW} kg`,l:"Latest Weight",c:D.g},{v:`↓ ${+(c.startW-c.latestW).toFixed(1)} kg`,l:"Lost So Far",c:D.g},{v:`${c.adherence}%`,l:"Adherence",c:c.adherence>=80?D.g:c.adherence>=60?D.am:D.r},{v:`${c.streak}d`,l:"Streak",c:D.am},{v:c.checkedIn?"Today ✓":"Not Yet",l:"Check-In",c:c.checkedIn?D.g:D.r}].map((s,i)=>(
+            {[{v:`${c.startW ?? "—"} kg`,l:"Start Weight",c:D.ts},{v:`${c.latestW ?? "—"} kg`,l:"Latest Weight",c:D.g},{v:(c.startW != null && c.latestW != null) ? `↓ ${+(c.startW-c.latestW).toFixed(1)} kg` : "—",l:"Lost So Far",c:D.g},{v:`${getAdherencePct(c.adherence)}%`,l:"Adherence",c:getAdherencePct(c.adherence)>=80?D.g:getAdherencePct(c.adherence)>=60?D.am:D.r},{v:`${c.streak ?? 0}d`,l:"Streak",c:D.am},{v:c.checkedIn?"Today ✓":"Not Yet",l:"Check-In",c:c.checkedIn?D.g:D.r}].map((s,i)=>(
               <GCard key={i} D={D} style={{textAlign:"center",padding:"12px 8px"}}>
                 <div style={{fontSize:18,fontWeight:900,color:s.c}}>{s.v}</div>
                 <div style={{fontSize:9,color:D.ts,fontWeight:600,letterSpacing:0.8,textTransform:"uppercase",marginTop:3}}>{s.l}</div>
@@ -1321,34 +1338,39 @@ function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needs
 
         {/* All clients list */}
         <div style={{fontSize:9.5,color:D.ts,fontWeight:700,letterSpacing:1.8,textTransform:"uppercase",marginBottom:10}}>All Clients</div>
-        {sorted.map((c,i)=>(
-          <GCard key={c.id} D={D} style={{marginBottom:10,padding:14,cursor:"pointer"}} onClick={()=>setSel(clients.indexOf(c))}>
+        {sorted.map((c,i)=>{
+          const adh = getAdherencePct(c.adherence);
+          const diffW = (c.startW != null && c.latestW != null) ? +(c.startW - c.latestW).toFixed(1) : null;
+          const initials = c.initials || (c.name ? c.name.split(" ").map(p=>p[0]).join("").toUpperCase().slice(0, 2) : "LF");
+          const stepsDisp = c.latestSteps != null ? Number(c.latestSteps).toLocaleString() : "0";
+          return (
+          <GCard key={c.id || i} D={D} style={{marginBottom:10,padding:14,cursor:"pointer"}} onClick={()=>setSel(clients.indexOf(c))}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <div style={{width:36,height:36,borderRadius:"50%",background:c.checkedIn&&c.status==="active"?D.gG:c.status==="paused"?D.amG:D.rG,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:c.checkedIn&&c.status==="active"?D.g:c.status==="paused"?D.am:D.r,border:`1.5px solid ${(c.checkedIn&&c.status==="active"?D.g:c.status==="paused"?D.am:D.r)}30`}}>{c.initials}</div>
+                <div style={{width:36,height:36,borderRadius:"50%",background:c.checkedIn&&c.status==="active"?D.gG:c.status==="paused"?D.amG:D.rG,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:c.checkedIn&&c.status==="active"?D.g:c.status==="paused"?D.am:D.r,border:`1.5px solid ${(c.checkedIn&&c.status==="active"?D.g:c.status==="paused"?D.am:D.r)}30`}}>{initials}</div>
                 <div>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <div style={{width:8,height:8,borderRadius:"50%",background:alertColor(trafficLight(c)),flexShrink:0}} title={TL_LABEL[trafficLight(c)]+" zone"}/>
-                    <div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name}</div>
+                    <div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name || "Client"}</div>
                     {c.status==="paused"&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:20,background:D.amG,color:D.am,fontWeight:700}}>PAUSED</span>}
                   </div>
-                  <div style={{fontSize:10,color:D.ts,marginTop:1}}>{c.phase} · Wk {c.week} · {c.city}</div>
+                  <div style={{fontSize:10,color:D.ts,marginTop:1}}>{c.phase || "Phase I"} · Wk {c.week || 1} · {c.city || ""}</div>
                 </div>
               </div>
               <div style={{textAlign:"right"}}>
-                <div style={{fontSize:13,fontWeight:700,color:D.g}}>↓{+(c.startW-c.latestW).toFixed(1)} kg</div>
-                <div style={{fontSize:10,color:D.ts,marginTop:1}}>{c.streak}d streak</div>
+                <div style={{fontSize:13,fontWeight:700,color:D.g}}>{diffW != null ? `↓${diffW} kg` : "—"}</div>
+                <div style={{fontSize:10,color:D.ts,marginTop:1}}>{c.streak ?? 0}d streak</div>
               </div>
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:10,color:D.ts}}>7-Day Adherence</span><span style={{fontSize:10,fontWeight:700,color:c.adherence>=80?D.g:c.adherence>=60?D.am:D.r}}>{c.adherence}%</span></div>
-            <div style={{height:4,background:D.brd,borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:`${c.adherence}%`,background:c.adherence>=80?D.g:c.adherence>=60?D.am:D.r,borderRadius:2}}/></div>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:10,color:D.ts}}>7-Day Adherence</span><span style={{fontSize:10,fontWeight:700,color:adh>=80?D.g:adh>=60?D.am:D.r}}>{adh}%</span></div>
+            <div style={{height:4,background:D.brd,borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:`${adh}%`,background:adh>=80?D.g:adh>=60?D.am:D.r,borderRadius:2}}/></div>
             <div style={{display:"flex",gap:8}}>
-              {[{l:`M ${c.latestMeals}/5`,c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:`S ${c.latestSteps.toLocaleString()}`,c:c.latestSteps>=(c.coachStepsGoal||8000)?D.g:D.am},{l:`W ${c.latestWater}L`,c:c.latestWater>=2.5?D.g:D.am},{l:`Str ${c.latestStress}/10`,c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r}].map((s,j)=>(
+              {[{l:`M ${c.latestMeals ?? "—"}/5`,c:(c.latestMeals>=4)?D.g:(c.latestMeals>=3)?D.am:D.r},{l:`S ${stepsDisp}`,c:(c.latestSteps>=(c.coachStepsGoal||8000))?D.g:D.am},{l:`W ${c.latestWater ?? "—"}L`,c:(c.latestWater>=2.5)?D.g:D.am},{l:`Str ${c.latestStress ?? "—"}/10`,c:(c.latestStress<=3)?D.g:(c.latestStress<=6)?D.am:D.r}].map((s,j)=>(
                 <div key={j} style={{fontSize:9,color:s.c,fontWeight:600,padding:"2px 6px",background:`${s.c}12`,borderRadius:10}}>{s.l}</div>
               ))}
             </div>
           </GCard>
-        ))}
+        );})}
       </div>
   );
 }
@@ -2386,7 +2408,7 @@ function LoginScreen({D,onPortal,onCoach}) {
 }
 
 /* ═══ ROOT APP ═══════════════════════════════════════════════ */
-export default function App() {
+function App() {
   const [theme,setTheme]=useState("dark");
   const [authLoading,setAuthLoading]=useState(true);
   const [isCoachUser,setIsCoachUser]=useState(false);
@@ -2643,5 +2665,46 @@ export default function App() {
       </div>
       <BottomNav D={D} tab={tab} setTab={setTab}/>
     </div>
+  );
+}
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("LeanFit Portal error caught by boundary:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{padding:24,color:"#ef4444",background:"#060b16",minHeight:"100vh",fontFamily:"-apple-system,system-ui,sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+          <div style={{fontSize:18,fontWeight:800,color:"#fff",marginBottom:8}}>Something went wrong</div>
+          <div style={{fontSize:12,color:"#94a3b8",maxWidth:450,marginBottom:20,lineHeight:1.5}}>
+            {this.state.error?.message || "An unexpected error occurred while rendering the portal."}
+          </div>
+          <button 
+            onClick={() => { localStorage.clear(); window.location.reload(); }}
+            style={{padding:"10px 20px",borderRadius:10,background:"#3b82f6",color:"#fff",border:"none",fontWeight:700,fontSize:13,cursor:"pointer"}}
+          >
+            Reset Session & Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function AppWrapper() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   );
 }
