@@ -61,35 +61,38 @@ async def get_current_user(
 
             # Check users/{uid} document or fallback to email lookup
             fs_role = "client"
-            user_doc = db.collection("users").document(uid).get()
-            if user_doc.exists:
-                u_data = user_doc.to_dict()
-                fs_role = u_data.get("role", "client")
-                if u_data.get("clientId"):
-                    client_id = u_data.get("clientId")
-            elif email:
-                # Fallback 1: lookup users collection by email
-                u_matches = list(db.collection("users").where("email", "==", email.lower()).limit(1).stream())
-                if u_matches:
-                    u_data = u_matches[0].to_dict()
+            try:
+                user_doc = db.collection("users").document(uid).get()
+                if user_doc.exists:
+                    u_data = user_doc.to_dict()
                     fs_role = u_data.get("role", "client")
                     if u_data.get("clientId"):
                         client_id = u_data.get("clientId")
+                elif email:
+                    # Fallback 1: lookup users collection by email
+                    u_matches = list(db.collection("users").where("email", "==", email.lower()).limit(1).stream())
+                    if u_matches:
+                        u_data = u_matches[0].to_dict()
+                        fs_role = u_data.get("role", "client")
+                        if u_data.get("clientId"):
+                            client_id = u_data.get("clientId")
 
-            # Fallback 2: If client_id is still uid or not found, lookup clients collection by email
-            if email and (not client_id or client_id == uid):
-                c_matches = list(db.collection("clients").where("email", "==", email.lower()).limit(1).stream())
-                if c_matches:
-                    client_id = c_matches[0].id
-                    try:
-                        db.collection("users").document(uid).set({
-                            "uid": uid,
-                            "email": email,
-                            "clientId": client_id,
-                            "role": fs_role
-                        }, merge=True)
-                    except Exception:
-                        pass
+                # Fallback 2: If client_id is still uid or not found, lookup clients collection by email
+                if email and (not client_id or client_id == uid):
+                    c_matches = list(db.collection("clients").where("email", "==", email.lower()).limit(1).stream())
+                    if c_matches:
+                        client_id = c_matches[0].id
+                        try:
+                            db.collection("users").document(uid).set({
+                                "uid": uid,
+                                "email": email,
+                                "clientId": client_id,
+                                "role": fs_role
+                            }, merge=True)
+                        except Exception:
+                            pass
+            except Exception as fs_err:
+                print(f"[AUTH WARN] Firestore lookup notice during auth: {fs_err}", flush=True)
 
             # Privilege escalation protection & coach identification:
             # User is coach if:
