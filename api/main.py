@@ -579,16 +579,19 @@ def complete_public_onboarding(request: Request, payload: Dict[str, Any] = Body(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="An account with this email already exists."
                 )
-            print(f"[AUTH WARN] Could not create user in Firebase Admin: {e}", flush=True)
-            uid = client_id
+            print(f"[AUTH ERROR] Could not create user in Firebase Admin: {e}", flush=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Account provisioning failed. Please try again or contact your coach.",
+            )
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[AUTH WARN] Firebase Admin Auth error: {e}", flush=True)
-        uid = client_id
-
-    if not uid:
-        uid = client_id
+        print(f"[AUTH ERROR] Could not create user in Firebase Admin: {e}", flush=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Account provisioning failed. Please try again or contact your coach.",
+        )
 
     # 2. Firestore: users/{uid}
     try:

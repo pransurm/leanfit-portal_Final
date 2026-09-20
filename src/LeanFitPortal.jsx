@@ -337,6 +337,8 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   const [measForm, setMeasForm] = useState({mArms:"",mWaist:"",mQuads:"",mChest:"",mShoulders:"",mHips:"",mNeck:""});
   const [photos, setPhotos] = useState({Front:null,Side:null,Back:null});
   const [errors, setErrors] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const F=(k,v)=>setForm(p=>({...p,[k]:v}));
   const MF=(k,v)=>setMeasForm(p=>({...p,[k]:v}));
@@ -374,6 +376,8 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
     const errs = validateCheckIn(form, isMeasDay, measForm);
     if (errs.length) { setErrors(errs); window.scrollTo(0,0); return; }
     setErrors([]);
+    setSubmitError("");
+    setSubmitting(true);
     const storedW = fromUnit(form.w, unit);
     if (!weightUnit&&pendingUnit) setWeightUnit(pendingUnit);
     
@@ -403,7 +407,11 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
     try {
       await submitCheckIn(entry);
     } catch (err) {
-      console.warn("Backend checkin sync:", err.message);
+      console.error("Backend checkin sync:", err.message);
+      setSubmitError(err.message || "Failed to submit check-in. Please try again.");
+      setSubmitting(false);
+      window.scrollTo(0,0);
+      return;
     }
 
     if ((isMeasDay || showMeasSection) && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front)) {
@@ -424,6 +432,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
       }
     }
 
+    setSubmitting(false);
     setData(d=>[...d,entry]);
     setSubmitted(true);
   };
@@ -447,6 +456,16 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
 
   return (
     <div style={{padding:"16px 16px 24px"}}>
+      {/* Submit error banner */}
+      {submitError && (
+        <GCard D={D} style={{marginBottom:12,padding:14,background:D.rG,border:`1.5px solid ${D.r}`}}>
+          <div style={{fontSize:12,color:D.r,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+            <Ic.Alert c={D.r} sz={16}/>
+            <span>{submitError}</span>
+          </div>
+        </GCard>
+      )}
+
       {/* Validation errors */}
       {errors.length>0 && (
         <GCard D={D} style={{marginBottom:12,padding:14,background:D.rG,border:`1px solid ${D.r}50`}}>
@@ -653,8 +672,12 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
         <Ta D={D} value={form.note} onChange={v=>F("note",v)} placeholder="Anything you want to share with Ram today? Struggling with something, feeling something different, a win you want to mention, travel coming up..." rows={3}/>
       </GCard>
 
-      <button onClick={submit} style={{width:"100%",padding:17,background:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:"pointer",boxShadow:`0 0 24px ${D.accG}`}}>
-        Submit Today's Check-In *
+      <button 
+        onClick={submit} 
+        disabled={submitting}
+        style={{width:"100%",padding:17,background:submitting?D.brd:D.acc,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"white",cursor:submitting?"not-allowed":"pointer",boxShadow:submitting?"none":`0 0 24px ${D.accG}`}}
+      >
+        {submitting ? "Submitting Check-In..." : "Submit Today's Check-In *"}
       </button>
       <div style={{textAlign:"center",marginTop:8,fontSize:10,color:D.tm}}>* All fields marked mandatory must be completed</div>
     </div>
@@ -778,17 +801,18 @@ function Dashboard({D, data, weightUnit, clientProfile}) {
 function CoachDashboard({D, theme, toggleTheme, onBack, plans, setPlans}) {
   const [sel, setSel] = useState(null);
   const [clients, setClients] = useState([]);
+  const [rosterError, setRosterError] = useState(null);
   const [tlFilter, setTlFilter] = useState("all");
 
   useEffect(() => {
     async function loadRoster() {
       try {
         const res = await fetchCoachRoster();
-        if (res.clients && res.clients.length > 0) {
-          setClients(res.clients);
-        }
+        setClients(res.clients || []);
+        setRosterError(null);
       } catch (err) {
-        console.warn("Could not load coach roster from API:", err.message);
+        setRosterError(err.message || "Could not load roster");
+        setClients([]);
       }
     }
     loadRoster();
@@ -827,7 +851,7 @@ function CoachDashboard({D, theme, toggleTheme, onBack, plans, setPlans}) {
           <button onClick={async ()=>{ await logoutUser(); window.location.reload(); }} style={{fontSize:11,color:D.r,background:`${D.r}15`,border:`1px solid ${D.r}35`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontWeight:600}}>Sign Out</button>
         </div>
       </div>
-      <CommandCentreBody D={D} clients={clients} sorted={sorted} setSel={setSel} active={active} checkedIn={checkedIn} needsAttn={needsAttn} tlCounts={tlCounts} tlFilter={tlFilter} setTlFilter={setTlFilter} alertColor={alertColor}/>
+      <CommandCentreBody D={D} clients={clients} sorted={sorted} setSel={setSel} active={active} checkedIn={checkedIn} needsAttn={needsAttn} tlCounts={tlCounts} tlFilter={tlFilter} setTlFilter={setTlFilter} alertColor={alertColor} rosterError={rosterError}/>
     </div>
   );
 }
@@ -1216,7 +1240,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
 }
 
 /* ═══ COMMAND CENTRE BODY ═══════════════════════════════════════ */
-function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needsAttn, tlCounts, tlFilter, setTlFilter, alertColor}) {
+function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needsAttn, tlCounts, tlFilter, setTlFilter, alertColor, rosterError}) {
   const now = new Date();
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -1224,6 +1248,15 @@ function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needs
 
   return (
       <div style={{flex:1,overflowY:"auto",padding:16}}>
+        {rosterError && (
+          <div style={{background:D.rG,border:`1.5px solid ${D.r}`,borderRadius:14,padding:"14px 16px",color:D.r,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+            <Ic.Alert c={D.r} sz={20}/>
+            <div>
+              <div style={{fontWeight:700,fontSize:13}}>Unable to load roster</div>
+              <div style={{fontSize:11,color:D.ts,marginTop:2}}>{rosterError}</div>
+            </div>
+          </div>
+        )}
         {/* Live Overview Header Card (Matching media_1789805534318.png) */}
         <div style={{background:D.c1,border:`1px solid ${D.brd}`,borderRadius:18,padding:"16px 18px",marginBottom:14}}>
           <div style={{fontSize:11,fontWeight:700,color:D.g,display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
@@ -1397,7 +1430,10 @@ function BodyScreen({D, measurements = [], clientProfile}) {
 }
 
 function WinsScreen({D, clientProfile, data}) {
-  const [text,setText]=useState(""); const [wins,setWins]=useState([]);
+  const [text,setText]=useState(""); 
+  const [wins,setWins]=useState([]);
+  const [winError,setWinError]=useState("");
+  const [submittingWin,setSubmittingWin]=useState(false);
   const dayCount = (data?.length || 0) + 1;
   const curWeek = Math.max(1, Math.ceil(dayCount / 7));
   return <div style={{padding:"16px 14px 24px"}}>
@@ -1405,7 +1441,33 @@ function WinsScreen({D, clientProfile, data}) {
     <GCard D={D} glowColor={D.amG} style={{marginBottom:16}}><SL D={D} color={D.am}>This Week — Week {curWeek}</SL>
       <div style={{fontSize:12,color:D.ts,marginBottom:12,lineHeight:1.7}}>What did you achieve this week? Any win counts — a workout completed, a food choice, better sleep, more energy.</div>
       <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="e.g. Hit 10k steps on Thursday. Resisted dessert. Energy consistent all week..." style={{width:"100%",background:D.inp,border:`1.5px solid ${text?D.am:D.inpBrd}`,borderRadius:12,padding:12,fontSize:13,color:D.t,outline:"none",resize:"vertical",minHeight:100,lineHeight:1.6,fontFamily:"-apple-system,system-ui,sans-serif",boxSizing:"border-box"}}/>
-      <button onClick={()=>{if(text.trim()){const todayStr=new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});setWins(w=>[{week:curWeek,date:todayStr,emoji:"⭐",text},...w]);setText("");}}} style={{marginTop:10,width:"100%",padding:12,background:D.amG,border:`1px solid ${D.am}50`,borderRadius:10,color:D.am,fontWeight:700,fontSize:13,cursor:"pointer"}}>Submit This Week's Wins</button>
+      {winError && (
+        <div style={{background:D.rG,border:`1px solid ${D.r}40`,borderRadius:10,padding:"10px 14px",color:D.r,fontSize:12,fontWeight:600,marginTop:10}}>
+          {winError}
+        </div>
+      )}
+      <button 
+        disabled={submittingWin || !text.trim()} 
+        onClick={async ()=>{
+          if (!text.trim()) return;
+          setSubmittingWin(true);
+          setWinError("");
+          const todayStr=new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
+          const winPayload = {week:curWeek,date:todayStr,emoji:"⭐",text:text.trim()};
+          try {
+            await submitWin(winPayload);
+            setWins(w=>[winPayload,...w]);
+            setText("");
+          } catch (err) {
+            setWinError(err.message || "Failed to submit win. Please try again.");
+          } finally {
+            setSubmittingWin(false);
+          }
+        }} 
+        style={{marginTop:10,width:"100%",padding:12,background:submittingWin||!text.trim()?D.brd:D.amG,border:`1px solid ${D.am}50`,borderRadius:10,color:submittingWin||!text.trim()?D.tm:D.am,fontWeight:700,fontSize:13,cursor:submittingWin||!text.trim()?"not-allowed":"pointer"}}
+      >
+        {submittingWin ? "Submitting..." : "Submit This Week's Wins"}
+      </button>
     </GCard>
     <GCard D={D} style={{marginBottom:14,padding:"12px 18px",background:D.c3,textAlign:"center"}}><div style={{fontSize:12,color:D.ts,lineHeight:1.7,fontStyle:"italic"}}>"Every win — no matter how small — is proof that your system is working. Log it. Own it. Build on it."</div><div style={{fontSize:10,color:D.am,fontWeight:700,marginTop:8,letterSpacing:1}}>— Ram Dixit</div></GCard>
     {wins.length===0 ? (
