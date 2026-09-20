@@ -67,6 +67,7 @@ class CheckInPayload(BaseModel):
     bed: Optional[str] = ""
     wake: Optional[str] = ""
     note: Optional[str] = ""
+    photos: Optional[Dict[str, Optional[str]]] = None
 
 class MeasurementPayload(BaseModel):
     week: int
@@ -108,7 +109,8 @@ class StatusUpdatePayload(BaseModel):
     resumeDate: Optional[str] = None
 
 class NoteUpdatePayload(BaseModel):
-    coachNote: str
+    coachNote: Optional[str] = None
+    coachFeedback: Optional[str] = None
 
 class ClientCreatePayload(BaseModel):
     name: str
@@ -220,6 +222,12 @@ def get_client_data(user: AuthenticatedUser = Depends(get_current_user)):
         c_dict = c.to_dict()
         if not c_dict.get("deleted", False):
             c_dict["id"] = c.id
+            if c_dict.get("photos"):
+                resolved_photos = {}
+                for slot, path in c_dict["photos"].items():
+                    if path:
+                        resolved_photos[slot] = generate_signed_read_url(path)
+                c_dict["photos"] = resolved_photos
             checkins.append(c_dict)
 
     # Sort chronologically by fullDate
@@ -330,6 +338,7 @@ def post_checkin(payload: CheckInPayload, user: AuthenticatedUser = Depends(get_
         "bed": payload.bed or "",
         "wake": payload.wake or "",
         "note": payload.note or "",
+        "photos": payload.photos if payload.photos else None,
         "createdAt": datetime.now(timezone.utc).isoformat()
     }
 
@@ -816,6 +825,12 @@ def get_coach_client_deep_dive(client_id: str, user: AuthenticatedUser = Depends
         c_dict = c.to_dict()
         if not c_dict.get("deleted", False):
             c_dict["id"] = c.id
+            if c_dict.get("photos"):
+                resolved_photos = {}
+                for slot, path in c_dict["photos"].items():
+                    if path:
+                        resolved_photos[slot] = generate_signed_read_url(path)
+                c_dict["photos"] = resolved_photos
             checkins.append(c_dict)
     checkins.sort(key=lambda c: parse_date_dmy(c.get("fullDate", "")) or date.min)
 
@@ -894,8 +909,19 @@ def update_client_status(client_id: str, payload: StatusUpdatePayload, user: Aut
 def update_coach_notes(client_id: str, payload: NoteUpdatePayload, user: AuthenticatedUser = Depends(require_coach)):
     db = get_db()
     client_ref = db.collection("clients").document(client_id)
-    client_ref.set({"coachNote": payload.coachNote, "updatedAt": datetime.now(timezone.utc).isoformat()}, merge=True)
-    return {"status": "ok"}
+    if not client_ref.get().exists:
+        raise HTTPException(status_code=404, detail="Client not found")
+    update_data = {"updatedAt": datetime.now(timezone.utc).isoformat()}
+    if payload.coachNote is not None:
+        update_data["coachNote"] = payload.coachNote
+    if payload.coachFeedback is not None:
+        update_data["coachFeedback"] = payload.coachFeedback
+    client_ref.set(update_data, merge=True)
+    return {
+        "status": "ok",
+        "coachNote": payload.coachNote,
+        "coachFeedback": payload.coachFeedback
+    }
 
 
 @api_router.delete("/coach/client/{client_id}/checkin/{checkin_id}")

@@ -145,10 +145,11 @@ export async function updateCoachStatus(clientId, { status, pauseReason, resumeD
   });
 }
 
-export async function updateCoachNotes(clientId, coachNote) {
+export async function updateCoachNotes(clientId, notesData) {
+  const payload = typeof notesData === "string" ? { coachNote: notesData } : notesData;
   return request(`/coach/client/${clientId}/notes`, {
     method: "PUT",
-    body: JSON.stringify({ coachNote })
+    body: JSON.stringify(payload)
   });
 }
 

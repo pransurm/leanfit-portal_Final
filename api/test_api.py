@@ -396,3 +396,91 @@ def test_mid_sequence_deletion_breaks_streak(client_with_mock_db):
     assert res_data["streak"] == 1
     assert mock_db.store["clients/client_a"]["streak"] == 1
 
+
+def test_checkin_with_photos(client_with_mock_db):
+    """Clients can submit photos with check-in and coach deep dive retrieves them."""
+    client, mock_db = client_with_mock_db
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="client_a_uid", email="alice@example.com", role="client", client_id="client_a"
+    )
+    mock_db.store["clients/client_a"] = {"name": "Alice"}
+
+    payload = {
+        "fullDate": "15-09-2026",
+        "date": "15/9",
+        "w": 68.0,
+        "steps": 10000,
+        "wrk": 3,
+        "meals": 4,
+        "mealNote": "",
+        "water": 3.0,
+        "multi": True,
+        "e": 8,
+        "sl": 7,
+        "st": 3,
+        "note": "Uploaded bi-weekly photos",
+        "photos": {
+            "Front": "data:image/jpeg;base64,mockFrontPhoto",
+            "Side": "data:image/jpeg;base64,mockSidePhoto",
+            "Back": None
+        }
+    }
+    res = client.post("/api/client/checkin", json=payload)
+    assert res.status_code == 200
+
+    # Verify stored in db
+    stored = mock_db.store["clients/client_a/checkins/15-09-2026"]
+    assert stored["photos"]["Front"] == "data:image/jpeg;base64,mockFrontPhoto"
+    assert stored["photos"]["Side"] == "data:image/jpeg;base64,mockSidePhoto"
+
+    # Now verify coach deep dive retrieves it
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
+    )
+    res_coach = client.get("/api/coach/client/client_a")
+    assert res_coach.status_code == 200
+    coach_checkins = res_coach.json()["checkins"]
+    assert len(coach_checkins) >= 1
+    found = [c for c in coach_checkins if c.get("fullDate") == "15-09-2026"][0]
+    assert found["photos"]["Front"] == "data:image/jpeg;base64,mockFrontPhoto"
+
+
+def test_coach_feedback_visibility(client_with_mock_db):
+    """Coach feedback is visible to the client, while coachNote remains private."""
+    client, mock_db = client_with_mock_db
+    mock_db.store["clients/client_a"] = {
+        "name": "Alice",
+        "coachNote": "PRIVATE: Internal note",
+        "coachFeedback": "Keep pushing, Alice!"
+    }
+
+    # As client
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="client_a_uid", email="alice@example.com", role="client", client_id="client_a"
+    )
+    res = client.get("/api/client/data")
+    assert res.status_code == 200
+    client_data = res.json()["client"]
+    assert "coachNote" not in client_data
+    assert client_data.get("coachFeedback") == "Keep pushing, Alice!"
+
+    # As coach: update notes and feedback
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
+    )
+    update_res = client.put("/api/coach/client/client_a/notes", json={
+        "coachNote": "Updated private note",
+        "coachFeedback": "Increase protein to 140g this week!"
+    })
+    assert update_res.status_code == 200
+
+    # Re-verify as client
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="client_a_uid", email="alice@example.com", role="client", client_id="client_a"
+    )
+    res2 = client.get("/api/client/data")
+    client_data2 = res2.json()["client"]
+    assert "coachNote" not in client_data2
+    assert client_data2.get("coachFeedback") == "Increase protein to 140g this week!"
+
+

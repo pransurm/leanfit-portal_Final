@@ -148,6 +148,46 @@ const Ic = {
   Check: ({c,sz=18}) => <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
 };
 
+/* ═══ IMAGE COMPRESSION (client-side resize, ensures fast upload <100KB) ═ */
+function compressImage(file, maxDimension = 1000, quality = 0.75) {
+  return new Promise((resolve) => {
+    if (!file || !file.type?.startsWith("image/")) {
+      resolve(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        resolve(dataUrl);
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ═══ CONFETTI (lightweight CSS burst, no deps) ═══════════════ */
 function Confetti({D}) {
   const colors=[D.acc,D.g,D.am,D.pur,D.r];
@@ -359,7 +399,13 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
   const [submitted, setSubmitted] = useState(false);
   const F=(k,v)=>setForm(p=>({...p,[k]:v}));
   const MF=(k,v)=>setMeasForm(p=>({...p,[k]:v}));
-  const handlePhoto=(slot,file)=>{if(!file)return;const r=new FileReader();r.onload=ev=>setPhotos(p=>({...p,[slot]:ev.target.result}));r.readAsDataURL(file);};
+  const handlePhoto = async (slot, file) => {
+    if (!file) return;
+    const compressed = await compressImage(file);
+    if (compressed) {
+      setPhotos(p => ({ ...p, [slot]: compressed }));
+    }
+  };
 
   // Schedule logic:
   // - Body measurements every 7 days (e.g. Day 8, 15, 22...)
@@ -473,6 +519,19 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
 
   return (
     <div style={{padding:"16px 16px 24px"}}>
+      {/* Note from Coach Ram Banner */}
+      {clientProfile?.coachFeedback && (
+        <GCard D={D} glowColor={D.accG} style={{marginBottom:14,border:`1.5px solid ${D.acc}40`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+            <div style={{width:24,height:24,borderRadius:"50%",background:D.acc,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:11,fontWeight:800}}>R</div>
+            <div style={{fontSize:11,fontWeight:700,color:D.acc,letterSpacing:0.5,textTransform:"uppercase"}}>Note from Coach Ram</div>
+          </div>
+          <div style={{fontSize:13,color:D.t,lineHeight:1.6,fontStyle:"italic",whiteSpace:"pre-wrap"}}>
+            "{clientProfile.coachFeedback}"
+          </div>
+        </GCard>
+      )}
+
       {/* Submit error banner */}
       {submitError && (
         <GCard D={D} style={{marginBottom:12,padding:14,background:D.rG,border:`1.5px solid ${D.r}`}}>
@@ -723,6 +782,19 @@ function Dashboard({D, data, weightUnit, clientProfile}) {
   return <div style={{padding:"16px 14px 24px"}}>
     <div style={{marginBottom:16}}><div style={{fontSize:9.5,color:D.acc,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>{clientProfile?.phase || "Phase I"} · Week {curWeek} of {totalWeeks}</div><div style={{fontSize:21,fontWeight:900,color:D.t}}>Progress Dashboard</div></div>
 
+    {/* Note from Coach Ram Banner */}
+    {clientProfile?.coachFeedback && (
+      <GCard D={D} glowColor={D.accG} style={{marginBottom:14,border:`1.5px solid ${D.acc}40`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <div style={{width:24,height:24,borderRadius:"50%",background:D.acc,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:11,fontWeight:800}}>R</div>
+          <div style={{fontSize:11,fontWeight:700,color:D.acc,letterSpacing:0.5,textTransform:"uppercase"}}>Note from Coach Ram</div>
+        </div>
+        <div style={{fontSize:13,color:D.t,lineHeight:1.6,fontStyle:"italic",whiteSpace:"pre-wrap"}}>
+          "{clientProfile.coachFeedback}"
+        </div>
+      </GCard>
+    )}
+
     {/* Phase arc — thick rounded ring, reference style */}
     <GCard D={D} glowColor={D.gG} style={{marginBottom:12,textAlign:"center",padding:20}}>
       <SL D={D}>Phase Progress — {clientProfile?.phase || "Phase I"}</SL>
@@ -880,6 +952,13 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
     const [pauseReason,setPauseReason]=useState(c?.pauseReason||"");
     const [resumeDate,setResumeDate]=useState(c?.resumeDate||"");
     const [coachNote,setCoachNote]=useState(c?.note||"");
+    const [coachFeedback,setCoachFeedback]=useState(c?.coachFeedback||"");
+    const [savingFeedback,setSavingFeedback]=useState(false);
+    const [feedbackSavedMsg,setFeedbackSavedMsg]=useState("");
+    const [savingPrivateNote,setSavingPrivateNote]=useState(false);
+    const [privateNoteSavedMsg,setPrivateNoteSavedMsg]=useState("");
+    const [viewPhoto,setViewPhoto]=useState(null);
+    const [trendTab,setTrendTab]=useState("all"); // "all" | "weight" | "steps" | "water"
     const [localStatus,setLocalStatus]=useState(c?.status || "active");
     const [nutriDraft,setNutriDraft]=useState(plans?.nutrition||"");
     const [workDraft,setWorkDraft]=useState(plans?.workout||"");
@@ -918,6 +997,9 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             }
             if (res.client?.coachNote !== undefined) {
               setCoachNote(res.client.coachNote);
+            }
+            if (res.client?.coachFeedback !== undefined) {
+              setCoachFeedback(res.client.coachFeedback);
             }
           }
         } catch (err) {
@@ -1009,7 +1091,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
         <div style={{padding:"14px 18px",background:D.c1,borderBottom:`1px solid ${D.brd}`,flexShrink:0,display:"flex",alignItems:"center",gap:12}}>
           <button onClick={()=>setSel(null)} style={{background:"none",border:"none",color:D.acc,cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:600}}><Ic.Chevron c={D.acc} sz={14} dir="left"/> Command Centre</button>
           <div style={{width:34,height:34,borderRadius:"50%",background:D.accG,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:D.acc,flexShrink:0,border:`1.5px solid ${D.brd}`}}>{initials}</div>
-          <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name}</div><div style={{fontSize:10,color:D.ts}}>{c.phase || "Phase I"} · {c.prog || "Programme"} · {c.city || ""}</div></div>
+          <div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:D.t}}>{c.name}</div></div>
           <button onClick={toggleTheme} title="Toggle Light/Dark Theme" style={{width:30,height:30,borderRadius:"50%",background:D.c2,border:`1px solid ${D.brd}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:D.t}}>
             {theme==="dark" ? <Ic.Sun c={D.t} sz={13}/> : <Ic.Moon c={D.t} sz={13}/>}
           </button>
@@ -1053,6 +1135,35 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
                 </div>
               ))}
             </div>
+
+            {/* Client's note to Ram from latest check-in */}
+            {checkins.length > 0 && checkins[0].note && (
+              <div style={{marginTop:12,background:`${D.acc}15`,border:`1px solid ${D.acc}35`,borderRadius:10,padding:"10px 12px"}}>
+                <div style={{fontSize:10,color:D.acc,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
+                  <span>💬</span> Client Note to Ram ({formatDisplayDate(checkins[0].fullDate || checkins[0].date)})
+                </div>
+                <div style={{fontSize:12,color:D.t,lineHeight:1.5,fontStyle:"italic"}}>
+                  "{checkins[0].note}"
+                </div>
+              </div>
+            )}
+
+            {/* Latest Progress Photos Thumbnail Preview */}
+            {checkins.length > 0 && checkins[0].photos && (checkins[0].photos.Front || checkins[0].photos.Side || checkins[0].photos.Back) && (
+              <div style={{marginTop:12,background:D.c2,border:`1px solid ${D.brd}`,borderRadius:10,padding:"10px 12px"}}>
+                <div style={{fontSize:10,color:D.pur,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",marginBottom:6}}>
+                  📷 Latest Progress Photos ({formatDisplayDate(checkins[0].fullDate || checkins[0].date)})
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  {["Front","Side","Back"].map(slot => checkins[0].photos[slot] ? (
+                    <div key={slot} onClick={()=>setViewPhoto({url: checkins[0].photos[slot], title: `${c.name} - ${slot} View (${formatDisplayDate(checkins[0].fullDate || checkins[0].date)})`})} style={{cursor:"pointer",borderRadius:8,overflow:"hidden",border:`1px solid ${D.brd}`,width:60,height:80,background:"#000",position:"relative"}}>
+                      <img src={checkins[0].photos[slot]} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:8,textAlign:"center",padding:"2px 0",fontWeight:700}}>{slot}</div>
+                    </div>
+                  ) : null)}
+                </div>
+              </div>
+            )}
           </GCard>
 
           {/* Adherence breakdown */}
@@ -1067,17 +1178,114 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             ))}
           </GCard>
 
-          {/* Mini weight chart */}
+          {/* Trendlines: Weight, Steps, Hydration */}
           <GCard D={D} style={{marginBottom:12}}>
-            <SL D={D}>Weight Trend (Last 7 Days)</SL>
-            <ResponsiveContainer width="100%" height={110}>
-              <AreaChart data={checkins.slice(0, 7).reverse()} margin={{top:5,right:5,bottom:0,left:-26}}>
-                <defs><linearGradient id="cwG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={D.g} stopOpacity={0.3}/><stop offset="100%" stopColor={D.g} stopOpacity={0}/></linearGradient></defs>
-                <XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis domain={["auto","auto"]} tick={{fontSize:9,fill:D.tm}}/>
-                <Tooltip content={TT({D})}/><Area type="monotone" dataKey="w" stroke={D.g} fill="url(#cwG)" strokeWidth={2} dot={{r:2.5,fill:D.g,strokeWidth:0}} name="Weight (kg)"/>
-              </AreaChart>
-            </ResponsiveContainer>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <SL D={D} style={{marginBottom:0}}>Trendlines & Analytics</SL>
+              <div style={{display:"flex",background:D.c2,borderRadius:8,padding:2,border:`1px solid ${D.brd}`}}>
+                {[["all","All"],["weight","Weight"],["steps","Steps"],["water","Hydration"]].map(([k,label])=>(
+                  <button key={k} onClick={()=>setTrendTab(k)} style={{padding:"4px 10px",borderRadius:6,border:"none",background:trendTab===k?D.accG:"transparent",color:trendTab===k?D.acc:D.ts,fontWeight:trendTab===k?700:500,fontSize:10,cursor:"pointer"}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {checkins.length === 0 ? (
+              <div style={{padding:"20px 0",textAlign:"center",color:D.tm,fontSize:12}}>No check-in history available for trendlines yet.</div>
+            ) : (
+              <>
+                {/* Weight Trend */}
+                {(trendTab === "all" || trendTab === "weight") && (
+                  <div style={{marginBottom: trendTab === "all" ? 16 : 0}}>
+                    <div style={{fontSize:11,fontWeight:700,color:D.g,marginBottom:4}}>Weight Trend (kg)</div>
+                    <ResponsiveContainer width="100%" height={110}>
+                      <AreaChart data={checkins.slice(0, 14).reverse()} margin={{top:5,right:5,bottom:0,left:-26}}>
+                        <defs><linearGradient id="cwG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={D.g} stopOpacity={0.3}/><stop offset="100%" stopColor={D.g} stopOpacity={0}/></linearGradient></defs>
+                        <XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis domain={["auto","auto"]} tick={{fontSize:9,fill:D.tm}}/>
+                        <Tooltip content={TT({D})}/><Area type="monotone" dataKey="w" stroke={D.g} fill="url(#cwG)" strokeWidth={2} dot={{r:2.5,fill:D.g,strokeWidth:0}} name="Weight (kg)"/>
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Steps Trend */}
+                {(trendTab === "all" || trendTab === "steps") && (
+                  <div style={{marginBottom: trendTab === "all" ? 16 : 0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{fontSize:11,fontWeight:700,color:D.pur}}>Daily Steps</div>
+                      <div style={{fontSize:10,color:D.ts}}>Goal: {(c?.coachStepsGoal || 8000).toLocaleString()}</div>
+                    </div>
+                    <ResponsiveContainer width="100%" height={110}>
+                      <BarChart data={checkins.slice(0, 14).reverse()} margin={{top:5,right:5,bottom:0,left:-30}}>
+                        <XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis tick={{fontSize:9,fill:D.tm}}/>
+                        <Tooltip content={TT({D})}/>
+                        <ReferenceLine y={c?.coachStepsGoal || 8000} stroke={D.g} strokeDasharray="4 4" strokeWidth={1.5}/>
+                        <Bar dataKey="steps" radius={[4,4,0,0]} name="Steps">
+                          {checkins.slice(0, 14).reverse().map((d,i)=><Cell key={i} fill={(d.steps || 0) >= (c?.coachStepsGoal || 8000) ? D.g : D.pur} opacity={0.85}/>)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Hydration Trend */}
+                {(trendTab === "all" || trendTab === "water") && (
+                  <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#0284c7"}}>Hydration (Litres)</div>
+                      <div style={{fontSize:10,color:D.ts}}>Target: 3.0L</div>
+                    </div>
+                    <ResponsiveContainer width="100%" height={110}>
+                      <AreaChart data={checkins.slice(0, 14).reverse()} margin={{top:5,right:5,bottom:0,left:-26}}>
+                        <defs><linearGradient id="cWaterG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0284c7" stopOpacity={0.35}/><stop offset="100%" stopColor="#0284c7" stopOpacity={0}/></linearGradient></defs>
+                        <XAxis dataKey="date" tick={{fontSize:9,fill:D.tm}}/><YAxis domain={[0,"auto"]} tick={{fontSize:9,fill:D.tm}}/>
+                        <Tooltip content={TT({D})}/>
+                        <ReferenceLine y={3.0} stroke="#0284c7" strokeDasharray="4 4" strokeWidth={1.5}/>
+                        <Area type="monotone" dataKey="water" stroke="#0284c7" fill="url(#cWaterG)" strokeWidth={2} dot={{r:2.5,fill:"#0284c7",strokeWidth:0}} name="Water (L)"/>
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </>
+            )}
           </GCard>
+
+          {/* Progress Photos & Transformation Gallery */}
+          {checkins.some(chk => chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)) && (
+            <GCard D={D} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <SL D={D} color={D.pur} style={{marginBottom:0}}>Client Transformation & Progress Photos</SL>
+                <div style={{fontSize:11,color:D.ts,fontWeight:600}}>
+                  {checkins.filter(chk => chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)).length} uploads
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {checkins.filter(chk => chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)).map(chk => (
+                  <div key={chk.id || chk.fullDate} style={{background:D.c2,borderRadius:10,padding:10,border:`1px solid ${D.brd}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                      <span style={{fontSize:12,fontWeight:700,color:D.t}}>{formatDisplayDate(chk.fullDate || chk.date)}</span>
+                      <span style={{fontSize:11,fontWeight:700,color:D.g}}>{chk.w} kg</span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                      {["Front","Side","Back"].map(slot => (
+                        <div key={slot} style={{background:D.c1,borderRadius:8,aspectRatio:"3/4",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",border:`1px solid ${D.brd}`,position:"relative"}}>
+                          {chk.photos?.[slot] ? (
+                            <div onClick={()=>setViewPhoto({url: chk.photos[slot], title: `${c.name} - ${slot} View (${formatDisplayDate(chk.fullDate || chk.date)})`})} style={{width:"100%",height:"100%",cursor:"pointer"}}>
+                              <img src={chk.photos[slot]} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.6)",color:"white",fontSize:9,textAlign:"center",padding:"2px 0",fontWeight:700}}>{slot} 🔍</div>
+                            </div>
+                          ) : (
+                            <span style={{fontSize:10,color:D.tm}}>{slot} —</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </GCard>
+          )}
 
           {/* Check-In History & Log Management with Soft Deletion */}
           <GCard D={D} style={{marginBottom:12}}>
@@ -1095,9 +1303,9 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             ) : checkins.length === 0 ? (
               <div style={{padding:"14px 0",textAlign:"center",color:D.tm,fontSize:12}}>No active check-ins found.</div>
             ) : (
-              <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:300,overflowY:"auto",paddingRight:4}}>
+              <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto",paddingRight:4}}>
                 {checkins.map((chk) => (
-                  <div key={chk.id || chk.fullDate || chk.date} style={{background:D.c2,borderRadius:10,padding:"10px 12px",border:`1px solid ${D.brd}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <div key={chk.id || chk.fullDate || chk.date} style={{background:D.c2,borderRadius:10,padding:"10px 12px",border:`1px solid ${D.brd}`,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
                         <span style={{fontSize:13,fontWeight:700,color:D.t}}>{formatDisplayDate(chk.fullDate || chk.date)}</span>
@@ -1109,16 +1317,29 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
                         <span>Water: <strong style={{color:chk.water>=2.5?D.g:D.am}}>{chk.water}L</strong></span>
                         <span>Energy: <strong style={{color:D.t}}>{chk.e}/10</strong></span>
                       </div>
+                      {/* Full Client Note (Not truncated) */}
                       {chk.note && (
-                        <div style={{fontSize:10,color:D.tm,fontStyle:"italic",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                          "{chk.note}"
+                        <div style={{fontSize:11,color:D.t,fontStyle:"italic",marginTop:6,background:D.c1,padding:"6px 10px",borderRadius:6,border:`1px solid ${D.brd}`,lineHeight:1.4}}>
+                          💬 "{chk.note}"
+                        </div>
+                      )}
+                      {/* Photo Thumbnails if attached */}
+                      {chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back) && (
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                          <span style={{fontSize:10,color:D.pur,fontWeight:600}}>Photos:</span>
+                          {["Front","Side","Back"].map(slot => chk.photos[slot] ? (
+                            <div key={slot} onClick={()=>setViewPhoto({url: chk.photos[slot], title: `${c.name} - ${slot} View (${formatDisplayDate(chk.fullDate || chk.date)})`})} style={{cursor:"pointer",borderRadius:6,overflow:"hidden",border:`1px solid ${D.brd}`,width:36,height:48,background:"#000",position:"relative"}}>
+                              <img src={chk.photos[slot]} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                              <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:7,textAlign:"center",padding:"1px 0"}}>{slot}</div>
+                            </div>
+                          ) : null)}
                         </div>
                       )}
                     </div>
                     <button
                       onClick={() => { setDeleteTarget(chk); setDeleteReason(""); setDeleteError(""); }}
                       title="Soft delete check-in with reason"
-                      style={{background:`${D.r}15`,border:`1px solid ${D.r}40`,color:D.r,borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,transition:"all 0.15s ease"}}
+                      style={{background:`${D.r}15`,border:`1px solid ${D.r}40`,color:D.r,borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,marginTop:2}}
                     >
                       Delete
                     </button>
@@ -1184,20 +1405,87 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             </button>
           </GCard>
 
+          {/* Note / Feedback For Client (Visible to Client) */}
+          <GCard D={D} style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <SL D={D} color={D.acc} style={{marginBottom:0}}>Note / Feedback For Client (Visible to Client)</SL>
+              <div style={{fontSize:10,color:D.ts}}>Appears on client's dashboard</div>
+            </div>
+            {feedbackSavedMsg && (
+              <div style={{background:`${D.g}18`,color:D.g,border:`1px solid ${D.g}30`,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:10}}>
+                ✓ {feedbackSavedMsg}
+              </div>
+            )}
+            <Ta D={D} value={coachFeedback} onChange={setCoachFeedback} placeholder="Write feedback, instructions, or encouraging notes for this client. They will see this note on their dashboard..." rows={3}/>
+            <button 
+              disabled={savingFeedback}
+              onClick={async ()=>{
+                setSavingFeedback(true);
+                try {
+                  await updateCoachNotes(clientId, { coachFeedback, coachNote });
+                  setFeedbackSavedMsg("Note published to client's dashboard!");
+                  setTimeout(()=>setFeedbackSavedMsg(""), 4000);
+                  setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,coachFeedback}:cl));
+                } catch (e) {
+                  console.warn("Coach feedback sync error:", e.message);
+                } finally {
+                  setSavingFeedback(false);
+                }
+              }} 
+              style={{marginTop:10,width:"100%",padding:11,background:D.acc,border:"none",borderRadius:10,color:"white",fontWeight:700,fontSize:13,cursor:savingFeedback?"not-allowed":"pointer"}}
+            >
+              {savingFeedback ? "Publishing..." : "Publish Note to Client"}
+            </button>
+          </GCard>
+
           {/* Coach private notes */}
           <GCard D={D}>
-            <SL D={D}>Coach Notes (Private)</SL>
-            <Ta D={D} value={coachNote} onChange={setCoachNote} placeholder="Private notes about this client — visible only to you. E.g. stress triggers, family context, business pressures..." rows={4}/>
-            <button onClick={async ()=>{
-              try {
-                await updateCoachNotes(clientId, coachNote);
-              } catch (e) {
-                console.warn("Coach note sync error:", e.message);
-              }
-              setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,note:coachNote}:cl));
-            }} style={{marginTop:10,width:"100%",padding:10,background:D.accG,border:`1px solid ${D.brd}`,borderRadius:10,color:D.acc,fontWeight:700,fontSize:13,cursor:"pointer"}}>Save Notes</button>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <SL D={D} style={{marginBottom:0}}>Coach Internal Notes (Private — Ram Only)</SL>
+              <div style={{fontSize:10,color:D.tm}}>Confidential</div>
+            </div>
+            {privateNoteSavedMsg && (
+              <div style={{background:`${D.g}18`,color:D.g,border:`1px solid ${D.g}30`,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:10}}>
+                ✓ {privateNoteSavedMsg}
+              </div>
+            )}
+            <Ta D={D} value={coachNote} onChange={setCoachNote} placeholder="Private notes about this client — visible only to you. E.g. stress triggers, family context, business pressures..." rows={3}/>
+            <button 
+              disabled={savingPrivateNote}
+              onClick={async ()=>{
+                setSavingPrivateNote(true);
+                try {
+                  await updateCoachNotes(clientId, { coachNote, coachFeedback });
+                  setPrivateNoteSavedMsg("Private notes saved!");
+                  setTimeout(()=>setPrivateNoteSavedMsg(""), 4000);
+                  setClients(cs=>cs.map((cl,i)=>i===sel?{...cl,note:coachNote,coachNote}:cl));
+                } catch (e) {
+                  console.warn("Coach note sync error:", e.message);
+                } finally {
+                  setSavingPrivateNote(false);
+                }
+              }} 
+              style={{marginTop:10,width:"100%",padding:10,background:D.c2,border:`1px solid ${D.brd}`,borderRadius:10,color:D.ts,fontWeight:700,fontSize:13,cursor:savingPrivateNote?"not-allowed":"pointer"}}
+            >
+              {savingPrivateNote ? "Saving..." : "Save Private Notes"}
+            </button>
           </GCard>
         </div>
+
+        {/* Full-Size Photo Modal */}
+        {viewPhoto && (
+          <div onClick={()=>setViewPhoto(null)} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.85)",zIndex:10000,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div onClick={e=>e.stopPropagation()} style={{maxWidth:600,width:"100%",maxHeight:"90vh",background:D.c1,borderRadius:16,overflow:"hidden",display:"flex",flexDirection:"column",border:`1px solid ${D.brd}`}}>
+              <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${D.brd}`}}>
+                <div style={{fontSize:13,fontWeight:700,color:D.t}}>{viewPhoto.title}</div>
+                <button onClick={()=>setViewPhoto(null)} style={{background:"none",border:"none",color:D.ts,fontSize:18,cursor:"pointer",padding:"4px 8px"}}>✕</button>
+              </div>
+              <div style={{flex:1,overflow:"auto",padding:16,display:"flex",alignItems:"center",justifyContent:"center",background:"#000"}}>
+                <img src={viewPhoto.url} alt={viewPhoto.title} style={{maxWidth:"100%",maxHeight:"70vh",objectFit:"contain"}}/>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Soft-Delete Confirmation Modal (Coach-only) */}
         {deleteTarget && (
@@ -1371,7 +1659,7 @@ function CommandCentreBody({D, clients, sorted, setSel, active, checkedIn, needs
                     <div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name || "Client"}</div>
                     {c.status==="paused"&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:20,background:D.amG,color:D.am,fontWeight:700}}>PAUSED</span>}
                   </div>
-                  <div style={{fontSize:10,color:D.ts,marginTop:1}}>{c.phase || "Phase I"} · Wk {c.week || 1} · {c.city || ""}</div>
+                  <div style={{fontSize:10,color:D.ts,marginTop:1}}>{c.phase || "Phase I"} · Wk {c.week || 1}</div>
                 </div>
               </div>
               <div style={{textAlign:"right"}}>
@@ -1578,7 +1866,6 @@ function MeScreen({D,theme,toggleTheme,weightUnit,setWeightUnit,data,onboardingD
         <input ref={fileRef} type="file" accept="image/*" onChange={handlePic} style={{display:"none"}}/>
       </div>
       <div style={{fontSize:22,fontWeight:900,color:D.t,marginTop:12,letterSpacing:"-0.5px"}}>{clientName}</div>
-      <div style={{fontSize:12,color:D.ts,marginTop:2}}>{clientProg}</div>
     </div>
     <GCard D={D} style={{marginBottom:12,padding:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${D.brd}`}}>

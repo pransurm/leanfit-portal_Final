@@ -36,8 +36,8 @@ def generate_signed_read_url(gcs_path: str) -> str:
     """Generate a V4 signed GET URL with a 15-minute TTL for viewing private files."""
     if not gcs_path:
         return ""
-    # If path is already a full URL, return as-is
-    if gcs_path.startswith("http://") or gcs_path.startswith("https://"):
+    # If path is already a full URL or data URL, return as-is
+    if gcs_path.startswith("http://") or gcs_path.startswith("https://") or gcs_path.startswith("data:"):
         return gcs_path
 
     client = get_storage_client()
