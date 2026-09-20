@@ -2,6 +2,7 @@ import uuid
 import time
 from collections import defaultdict
 from datetime import datetime, date, timezone
+from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,10 +24,19 @@ from api.calculations import (
 from api.storage import generate_signed_upload_url, generate_signed_read_url
 from api.create_client import generate_tough_password
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        get_db()
+    except Exception as e:
+        print(f"[STARTUP NOTICE] DB initialization note: {e}", flush=True)
+    yield
+
 app = FastAPI(
     title="LeanFit Portal API",
     version="1.0.0",
-    description="Google Cloud Native Backend for LeanFit Portal"
+    description="Google Cloud Native Backend for LeanFit Portal",
+    lifespan=lifespan
 )
 
 # CORS configuration
@@ -131,6 +141,10 @@ def get_me(user: AuthenticatedUser = Depends(get_current_user)):
     client_data = {}
     if user.client_id:
         doc = db.collection("clients").document(user.client_id).get()
+        if not doc.exists and user.email:
+            matches = list(db.collection("clients").where("email", "==", user.email.lower()).limit(1).stream())
+            if matches:
+                doc = matches[0]
         if doc.exists:
             client_data = doc.to_dict()
             if not user.is_coach and "coachNote" in client_data:
@@ -286,6 +300,11 @@ def post_checkin(payload: CheckInPayload, user: AuthenticatedUser = Depends(get_
     db = get_db()
     client_id = user.client_id
     client_ref = db.collection("clients").document(client_id)
+    if not client_ref.get().exists and user.email:
+        matches = list(db.collection("clients").where("email", "==", user.email.lower()).limit(1).stream())
+        if matches:
+            client_id = matches[0].id
+            client_ref = db.collection("clients").document(client_id)
 
     # Ensure fullDate is standardized DD-MM-YYYY
     parsed_date = parse_date_dmy(payload.fullDate)
@@ -366,6 +385,11 @@ def post_measurement(payload: MeasurementPayload, user: AuthenticatedUser = Depe
     db = get_db()
     client_id = user.client_id
     client_ref = db.collection("clients").document(client_id)
+    if not client_ref.get().exists and user.email:
+        matches = list(db.collection("clients").where("email", "==", user.email.lower()).limit(1).stream())
+        if matches:
+            client_id = matches[0].id
+            client_ref = db.collection("clients").document(client_id)
 
     client_doc = client_ref.get()
     height_cm = client_doc.to_dict().get("height", 175.0) if client_doc.exists else 175.0
@@ -406,6 +430,11 @@ def post_win(payload: WinPayload, user: AuthenticatedUser = Depends(get_current_
     db = get_db()
     client_id = user.client_id
     client_ref = db.collection("clients").document(client_id)
+    if not client_ref.get().exists and user.email:
+        matches = list(db.collection("clients").where("email", "==", user.email.lower()).limit(1).stream())
+        if matches:
+            client_id = matches[0].id
+            client_ref = db.collection("clients").document(client_id)
 
     win_data = {
         "week": payload.week,
@@ -425,6 +454,11 @@ def save_onboarding(payload: Dict[str, Any] = Body(...), user: AuthenticatedUser
     db = get_db()
     client_id = user.client_id
     client_ref = db.collection("clients").document(client_id)
+    if not client_ref.get().exists and user.email:
+        matches = list(db.collection("clients").where("email", "==", user.email.lower()).limit(1).stream())
+        if matches:
+            client_id = matches[0].id
+            client_ref = db.collection("clients").document(client_id)
 
     # Save intake answers
     client_ref.collection("onboarding").document("intake").set(payload, merge=True)

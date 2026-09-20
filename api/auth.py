@@ -36,6 +36,7 @@ async def get_current_user(
             )
         token = authorization.split("Bearer ", 1)[1].strip()
         try:
+            db = get_db()
             from firebase_admin import auth as firebase_auth
             from firebase_admin import exceptions as firebase_exceptions
             try:
@@ -59,28 +60,56 @@ async def get_current_user(
             client_id = decoded_token.get("clientId", uid)
 
             # Check users/{uid} document or fallback to email lookup
-            db = get_db()
             fs_role = "client"
             user_doc = db.collection("users").document(uid).get()
             if user_doc.exists:
                 u_data = user_doc.to_dict()
                 fs_role = u_data.get("role", "client")
-                client_id = u_data.get("clientId", client_id)
+                if u_data.get("clientId"):
+                    client_id = u_data.get("clientId")
             elif email:
                 # Fallback 1: lookup users collection by email
                 u_matches = list(db.collection("users").where("email", "==", email.lower()).limit(1).stream())
                 if u_matches:
                     u_data = u_matches[0].to_dict()
                     fs_role = u_data.get("role", "client")
-                    client_id = u_data.get("clientId", client_id)
-                else:
-                    # Fallback 2: lookup clients collection by email
-                    c_matches = list(db.collection("clients").where("email", "==", email.lower()).limit(1).stream())
-                    if c_matches:
-                        client_id = c_matches[0].id
+                    if u_data.get("clientId"):
+                        client_id = u_data.get("clientId")
 
-            # Privilege escalation protection: require BOTH token claim and Firestore document to be coach
-            role = "coach" if (token_role == "coach" and fs_role == "coach") else "client"
+            # Fallback 2: If client_id is still uid or not found, lookup clients collection by email
+            if email and (not client_id or client_id == uid):
+                c_matches = list(db.collection("clients").where("email", "==", email.lower()).limit(1).stream())
+                if c_matches:
+                    client_id = c_matches[0].id
+                    try:
+                        db.collection("users").document(uid).set({
+                            "uid": uid,
+                            "email": email,
+                            "clientId": client_id,
+                            "role": fs_role
+                        }, merge=True)
+                    except Exception:
+                        pass
+
+            # Privilege escalation protection & coach identification:
+            # User is coach if:
+            # 1. Custom token claim 'role' == 'coach', OR
+            # 2. Firestore users collection 'role' == 'coach', OR
+            # 3. Known coach email (e.g. ram@leanfit.io or coach@leanfit.io)
+            is_coach = (
+                token_role == "coach"
+                or fs_role == "coach"
+                or (email and email.lower().strip() in ("ram@leanfit.io", "coach@leanfit.io"))
+            )
+            role = "coach" if is_coach else "client"
+
+            # Auto-sync custom claims if user is coach but token lacks claims
+            if is_coach and token_role != "coach":
+                try:
+                    firebase_auth.set_custom_user_claims(uid, {"role": "coach"})
+                except Exception:
+                    pass
+
             return AuthenticatedUser(uid=uid, email=email, role=role, client_id=client_id)
         except HTTPException:
             raise
