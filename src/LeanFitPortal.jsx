@@ -875,20 +875,15 @@ function CoachDashboard({D, theme, toggleTheme, onBack, plans, setPlans}) {
 
 /* ═══ CLIENT DEEP DIVE (extracted — hooks must not live in a conditional) ═══ */
 function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients, plans, setPlans}) {
-    const c=clients[sel];
+    const c = (clients && sel !== null && sel !== undefined) ? clients[sel] : null;
     const [showPause,setShowPause]=useState(false);
-    const [pauseReason,setPauseReason]=useState(c.pauseReason||"");
-    const [resumeDate,setResumeDate]=useState(c.resumeDate||"");
-    const [coachNote,setCoachNote]=useState(c.note||"");
-    const [localStatus,setLocalStatus]=useState(c.status);
+    const [pauseReason,setPauseReason]=useState(c?.pauseReason||"");
+    const [resumeDate,setResumeDate]=useState(c?.resumeDate||"");
+    const [coachNote,setCoachNote]=useState(c?.note||"");
+    const [localStatus,setLocalStatus]=useState(c?.status || "active");
     const [nutriDraft,setNutriDraft]=useState(plans?.nutrition||"");
     const [workDraft,setWorkDraft]=useState(plans?.workout||"");
     const [pushed,setPushed]=useState("");
-    const alerts=clientAlerts(c);
-    const alertColor=(lvl)=>({r:D.r,am:D.am,g:D.g}[lvl]||D.ts);
-    const clientAdh=calcAdh(checkins, c.coachStepsGoal || 8000);
-    const tl=trafficLight(c);
-    const clientId = c.id ? String(c.id).toLowerCase() : c.name.toLowerCase().replace(" ", "_");
 
     const [checkins, setCheckins] = useState([]);
     const [loadingCheckins, setLoadingCheckins] = useState(true);
@@ -899,8 +894,19 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
     const [deleteError, setDeleteError] = useState("");
     const [actionMsg, setActionMsg] = useState("");
 
+    const clientId = c ? (c.id ? String(c.id).toLowerCase() : (c.name ? c.name.toLowerCase().replace(" ", "_") : "")) : "";
+    const alerts = clientAlerts(c);
+    const alertColor = (lvl) => ({r:D.r,am:D.am,g:D.g}[lvl]||D.ts);
+    const clientAdh = calcAdh(checkins, c?.coachStepsGoal || 8000);
+    const tl = trafficLight(c);
+    const initials = c?.initials || (c?.name ? c.name.split(" ").map(p=>p[0]).join("").toUpperCase().slice(0, 2) : "LF");
+
     useEffect(() => {
       let isMounted = true;
+      if (!clientId) {
+        setLoadingCheckins(false);
+        return;
+      }
       async function loadDeepDive() {
         setLoadingCheckins(true);
         setDeepDiveError("");
@@ -986,13 +992,24 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
       setPushed(kind); setTimeout(()=>setPushed(""),2500);
     };
 
+    if (!c) {
+      return (
+        <div style={{minHeight:"100vh",background:D.bg,padding:20,fontFamily:"-apple-system,system-ui,sans-serif"}}>
+          <button onClick={()=>setSel(null)} style={{background:"none",border:"none",color:D.acc,cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:600}}>
+            ← Back to Command Centre
+          </button>
+          <div style={{marginTop:20,color:D.ts,fontSize:14}}>Client not found.</div>
+        </div>
+      );
+    }
+
     return (
       <div style={{height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif"}}>
         {/* Header */}
         <div style={{padding:"14px 18px",background:D.c1,borderBottom:`1px solid ${D.brd}`,flexShrink:0,display:"flex",alignItems:"center",gap:12}}>
           <button onClick={()=>setSel(null)} style={{background:"none",border:"none",color:D.acc,cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:600}}><Ic.Chevron c={D.acc} sz={14} dir="left"/> Command Centre</button>
-          <div style={{width:34,height:34,borderRadius:"50%",background:D.accG,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:D.acc,flexShrink:0,border:`1.5px solid ${D.brd}`}}>{c.initials}</div>
-          <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name}</div><div style={{fontSize:10,color:D.ts}}>{c.phase} · {c.prog} · {c.city}</div></div>
+          <div style={{width:34,height:34,borderRadius:"50%",background:D.accG,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:D.acc,flexShrink:0,border:`1.5px solid ${D.brd}`}}>{initials}</div>
+          <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:D.t}}>{c.name}</div><div style={{fontSize:10,color:D.ts}}>{c.phase || "Phase I"} · {c.prog || "Programme"} · {c.city || ""}</div></div>
           <button onClick={toggleTheme} title="Toggle Light/Dark Theme" style={{width:30,height:30,borderRadius:"50%",background:D.c2,border:`1px solid ${D.brd}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:D.t}}>
             {theme==="dark" ? <Ic.Sun c={D.t} sz={13}/> : <Ic.Moon c={D.t} sz={13}/>}
           </button>
@@ -1029,7 +1046,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
           <GCard D={D} style={{marginBottom:12}}>
             <SL D={D}>Latest Check-In Snapshot</SL>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-              {[{l:"Meals",v:`${c.latestMeals}/5`,c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:"Steps",v:c.latestSteps.toLocaleString(),c:c.latestSteps>=(c.coachStepsGoal||8000)?D.g:c.latestSteps>=(c.coachStepsGoal||8000)*0.7?D.am:D.r},{l:"Water",v:`${c.latestWater}L`,c:c.latestWater>=3?D.g:c.latestWater>=2?D.am:D.r},{l:"Energy",v:`${c.latestEnergy}/10`,c:c.latestEnergy>=7?D.g:c.latestEnergy>=5?D.am:D.r},{l:"Stress",v:`${c.latestStress}/10`,c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r},{l:"Streak",v:`${c.streak}d`,c:c.streak>=7?D.g:c.streak>=3?D.am:D.r}].map((s,i)=>(
+              {[{l:"Meals",v:c.latestMeals!=null?`${c.latestMeals}/5`:"—",c:c.latestMeals>=4?D.g:c.latestMeals>=3?D.am:D.r},{l:"Steps",v:c.latestSteps!=null?Number(c.latestSteps).toLocaleString():"0",c:(c.latestSteps||0)>=(c.coachStepsGoal||8000)?D.g:(c.latestSteps||0)>=(c.coachStepsGoal||8000)*0.7?D.am:D.r},{l:"Water",v:c.latestWater!=null?`${c.latestWater}L`:"—",c:c.latestWater>=3?D.g:c.latestWater>=2?D.am:D.r},{l:"Energy",v:c.latestEnergy!=null?`${c.latestEnergy}/10`:"—",c:c.latestEnergy>=7?D.g:c.latestEnergy>=5?D.am:D.r},{l:"Stress",v:c.latestStress!=null?`${c.latestStress}/10`:"—",c:c.latestStress<=3?D.g:c.latestStress<=6?D.am:D.r},{l:"Streak",v:`${c.streak||0}d`,c:(c.streak||0)>=7?D.g:(c.streak||0)>=3?D.am:D.r}].map((s,i)=>(
                 <div key={i} style={{background:D.c2,borderRadius:8,padding:"8px 10px",textAlign:"center",border:`1px solid ${D.brd}`}}>
                   <div style={{fontSize:14,fontWeight:700,color:s.c}}>{s.v}</div>
                   <div style={{fontSize:9,color:D.ts,marginTop:2}}>{s.l}</div>
