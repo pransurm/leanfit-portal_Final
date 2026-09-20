@@ -2388,7 +2388,27 @@ function LoginScreen({D,onPortal,onCoach}) {
 /* ═══ ROOT APP ═══════════════════════════════════════════════ */
 export default function App() {
   const [theme,setTheme]=useState("dark");
-  const [stage,setStage]=useState("login");
+  const [authLoading,setAuthLoading]=useState(true);
+  const [isCoachUser,setIsCoachUser]=useState(false);
+  const [stage,setStage]=useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("onboard") === "true" || params.get("join") === "true" || window.location.hash === "#onboard") {
+      return "onboarding";
+    }
+    return localStorage.getItem("leanfit_stage") || "login";
+  });
+
+  const updateStage = (newStage) => {
+    setStage(newStage);
+    try {
+      if (newStage && newStage !== "login") {
+        localStorage.setItem("leanfit_stage", newStage);
+      } else {
+        localStorage.removeItem("leanfit_stage");
+      }
+    } catch (_) {}
+  };
+
   const [tab,setTab]=useState("checkin");
   const [data,setData]=useState([]);
   const [measurements,setMeasurements]=useState([]);
@@ -2420,7 +2440,7 @@ export default function App() {
     // Secret onboarding link: e.g. https://portal.leanfit.in/?onboard=true or #onboard
     const params = new URLSearchParams(window.location.search);
     if (params.get("onboard") === "true" || params.get("join") === "true" || window.location.hash === "#onboard") {
-      setStage("onboarding");
+      updateStage("onboarding");
     }
   }, []);
 
@@ -2453,7 +2473,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const derivedName = user.displayName || (user.email ? user.email.split("@")[0].replace(/[0-9._]/g, '').replace(/^./, c => c.toUpperCase()) : "Client");
         setClientProfile(p => ({
@@ -2461,6 +2481,29 @@ export default function App() {
           name: (p.name && p.name !== "Client") ? p.name : derivedName,
           email: user.email
         }));
+
+        let isCoach = (user.email?.toLowerCase().trim() === "ram@leanfit.io" || user.email?.toLowerCase().trim() === "coach@leanfit.io");
+        try {
+          const me = await fetchMe();
+          if (me?.role === "coach") isCoach = true;
+        } catch (_) {}
+        setIsCoachUser(isCoach);
+
+        const params = new URLSearchParams(window.location.search);
+        const isOnboard = params.get("onboard") === "true" || params.get("join") === "true" || window.location.hash === "#onboard";
+
+        if (!isOnboard) {
+          const savedStage = localStorage.getItem("leanfit_stage");
+          let nextStage;
+          if (isCoach) {
+            nextStage = (savedStage === "portal") ? "portal" : "coach";
+          } else {
+            nextStage = "portal";
+          }
+          setStage(nextStage);
+          try { localStorage.setItem("leanfit_stage", nextStage); } catch (_) {}
+        }
+
         loadData(user.email);
       } else {
         setData([]);
@@ -2477,8 +2520,14 @@ export default function App() {
           phaseWeeks: 12,
           coachStepsGoal: 8000
         });
-        setStage("login");
+        setIsCoachUser(false);
+        try { localStorage.removeItem("leanfit_stage"); } catch (_) {}
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("onboard") !== "true" && params.get("join") !== "true" && window.location.hash !== "#onboard") {
+          setStage("login");
+        }
       }
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, [loadData]);
@@ -2491,7 +2540,7 @@ export default function App() {
       name: derivedName,
       email: currentEmail
     }));
-    setStage("portal");
+    updateStage("portal");
     loadData(currentEmail);
   };
 
@@ -2515,7 +2564,19 @@ export default function App() {
     ...(showPhotoReminder ? [{ t: `Progress Photos in ${daysUntilPhoto} Day${daysUntilPhoto > 1 ? "s" : ""}`, s: `Bi-weekly photos due in ${daysUntilPhoto} days. Empty stomach, morning.`, i: Ic.Camera, c: D.pur }] : [])
   ];
 
-  if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onCoach={()=>setStage("coach")}/>;
+  if (authLoading) {
+    return (
+      <div style={{minHeight:"100vh",background:D.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"-apple-system,system-ui,sans-serif"}}>
+        <LFLogo D={D}/>
+        <div style={{marginTop:24,fontSize:13,color:D.ts,fontWeight:600,letterSpacing:1,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:D.acc}}/>
+          Loading portal...
+        </div>
+      </div>
+    );
+  }
+
+  if(stage==="login") return <LoginScreen D={D} onPortal={handlePortalEnter} onCoach={()=>updateStage("coach")}/>;
   if(stage==="onboarding") return <OnboardingScreen D={D} onComplete={async (f, acc)=>{
     setMeasUnit(f.measUnit||"cm");
     setOnboardingData(f);
@@ -2540,16 +2601,21 @@ export default function App() {
         await loginWithEmail(acc.email, acc.password);
       } catch (_) {}
     }
-    setStage("portal");
+    updateStage("portal");
     loadData();
   }}/>;
-  if(stage==="coach") return <CoachDashboard D={D} theme={theme} toggleTheme={toggle} onBack={()=>setStage("portal")} plans={plans} setPlans={setPlans}/>;
+  if(stage==="coach") return <CoachDashboard D={D} theme={theme} toggleTheme={toggle} onBack={()=>updateStage("portal")} plans={plans} setPlans={setPlans}/>;
 
   return (
     <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:D.bg,fontFamily:"-apple-system,system-ui,sans-serif",overflow:"hidden",position:"relative"}}>
       <div style={{background:`linear-gradient(135deg,${D.accD},${D.acc})`,padding:"18px 20px 22px",borderRadius:"0 0 26px 26px",flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center",boxShadow:`0 6px 18px ${D.accG}`}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}><LFLogo D={{...D,t:"#ffffff",ts:"rgba(255,255,255,0.7)",g:"#c9ef5e"}} compact/><div><div style={{fontSize:9,color:"rgba(255,255,255,0.75)",fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{clientProfile.phase || "Phase I"} · Week {curWeek}</div><div style={{fontSize:15,fontWeight:800,color:"#ffffff",marginTop:1}}>{headerLabel}</div></div></div>
         <div style={{display:"flex",alignItems:"center",gap:8,position:"relative"}}>
+          {isCoachUser && (
+            <button onClick={()=>updateStage("coach")} style={{padding:"5px 10px",borderRadius:8,background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.3)",color:"#ffffff",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+              Coach View →
+            </button>
+          )}
           <button onClick={()=>setShowNotifs(s=>!s)} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,0.16)",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",position:"relative"}}>
             <Ic.Bell c="#ffffff" sz={15}/>
             {notifs.length>0 && <div style={{position:"absolute",top:6,right:7,width:7,height:7,borderRadius:"50%",background:D.r,border:"1.5px solid white"}}/>}

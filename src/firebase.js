@@ -44,6 +44,7 @@ export async function loginWithEmail(email, password) {
 
 export async function logoutUser() {
   try {
+    try { localStorage.removeItem("leanfit_stage"); } catch (_) {}
     await signOut(auth);
     return { error: null };
   } catch (err) {
@@ -52,6 +53,11 @@ export async function logoutUser() {
 }
 
 export async function getCurrentToken(forceRefresh = false) {
+  if (auth.authStateReady) {
+    try {
+      await auth.authStateReady();
+    } catch (_) {}
+  }
   if (!auth.currentUser) return null;
   try {
     return await getIdToken(auth.currentUser, forceRefresh);
