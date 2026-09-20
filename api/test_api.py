@@ -484,3 +484,56 @@ def test_coach_feedback_visibility(client_with_mock_db):
     assert client_data2.get("coachFeedback") == "Increase protein to 140g this week!"
 
 
+def test_deep_dive_resolves_all_photo_sources(client_with_mock_db):
+    """Coach deep dive resolves photos from checkins, measurements, and onboarding."""
+    client, mock_db = client_with_mock_db
+
+    # 1. Check-in with photos
+    mock_db.store["clients/client_a/checkins/18-09-2026"] = {
+        "fullDate": "18-09-2026",
+        "w": 66.8,
+        "photos": {
+            "Front": "data:image/jpeg;base64,chkFront",
+            "Side": "data:image/jpeg;base64,chkSide"
+        }
+    }
+
+    # 2. Measurement with photos
+    mock_db.store["clients/client_a/measurements/week_1"] = {
+        "week": 1,
+        "date": "10-09-2026",
+        "weight": 67.2,
+        "photoFrontGcsPath": "data:image/jpeg;base64,measFront"
+    }
+
+    # 3. Onboarding with photos
+    mock_db.store["clients/client_a/onboarding/intake"] = {
+        "photoFront": "data:image/jpeg;base64,onboardFront",
+        "photoSide": "data:image/jpeg;base64,onboardSide",
+        "weight": 68.0,
+        "submittedAt": "01-09-2026"
+    }
+
+    # As coach Ram
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="ram_uid", email="ram@leanfit.io", role="coach", client_id="coach_ram"
+    )
+
+    res = client.get("/api/coach/client/client_a")
+    assert res.status_code == 200
+    data = res.json()
+
+    # Verify checkin photos
+    chk = [c for c in data["checkins"] if c.get("fullDate") == "18-09-2026"][0]
+    assert chk["photos"]["Front"] == "data:image/jpeg;base64,chkFront"
+
+    # Verify measurement photos
+    meas = [m for m in data["measurements"] if m.get("week") == 1][0]
+    assert meas["photoFrontUrl"] == "data:image/jpeg;base64,measFront"
+
+    # Verify onboarding photos
+    assert data["onboarding"]["photoFront"] == "data:image/jpeg;base64,onboardFront"
+    assert data["onboarding"]["photoSide"] == "data:image/jpeg;base64,onboardSide"
+
+
+

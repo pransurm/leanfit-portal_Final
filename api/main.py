@@ -270,6 +270,17 @@ def get_client_data(user: AuthenticatedUser = Depends(get_current_user)):
     # Fetch onboarding intake if available
     onboarding_doc = client_ref.collection("onboarding").document("intake").get()
     onboarding = onboarding_doc.to_dict() if onboarding_doc.exists else None
+    if onboarding:
+        for slot in ["photoFront", "photoSide", "photoBack", "photoFrontUrl", "photoSideUrl", "photoBackUrl"]:
+            if onboarding.get(slot):
+                onboarding[slot] = generate_signed_read_url(onboarding[slot])
+
+    if client.get("photos"):
+        resolved_client_photos = {}
+        for slot, path in client["photos"].items():
+            if path:
+                resolved_client_photos[slot] = generate_signed_read_url(path)
+        client["photos"] = resolved_client_photos
 
     # Calculate adherence & streak dynamically or use cached
     adh = calc_adherence(checkins, steps_goal)
@@ -861,6 +872,17 @@ def get_coach_client_deep_dive(client_id: str, user: AuthenticatedUser = Depends
 
     onboarding_doc = client_ref.collection("onboarding").document("intake").get()
     onboarding = onboarding_doc.to_dict() if onboarding_doc.exists else None
+    if onboarding:
+        for slot in ["photoFront", "photoSide", "photoBack", "photoFrontUrl", "photoSideUrl", "photoBackUrl"]:
+            if onboarding.get(slot):
+                onboarding[slot] = generate_signed_read_url(onboarding[slot])
+
+    if client.get("photos"):
+        resolved_client_photos = {}
+        for slot, path in client["photos"].items():
+            if path:
+                resolved_client_photos[slot] = generate_signed_read_url(path)
+        client["photos"] = resolved_client_photos
 
     return {
         "client": client,

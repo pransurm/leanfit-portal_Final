@@ -464,7 +464,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
       mealNote: form.meals<=3?form.mealNote:"",
       multi: form.multi===true,
       note: form.note,
-      photos: (isPhotoDay || showPhotoSection) ? photos : null
+      photos: (photos && (photos.Front || photos.Side || photos.Back)) ? photos : null
     };
 
     try {
@@ -477,7 +477,7 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
       return;
     }
 
-    if ((isMeasDay || showMeasSection) && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front)) {
+    if ((isMeasDay || showMeasSection) && (measForm.mWaist || measForm.mArms || measForm.mChest || photos.Front || photos.Side || photos.Back)) {
       try {
         await submitMeasurement({
           week: curWeek,
@@ -488,7 +488,10 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
           chest: measForm.mChest ? +measForm.mChest : null,
           shoulders: measForm.mShoulders ? +measForm.mShoulders : null,
           hips: measForm.mHips ? +measForm.mHips : null,
-          neck: measForm.mNeck ? +measForm.mNeck : null
+          neck: measForm.mNeck ? +measForm.mNeck : null,
+          photoFrontGcsPath: photos.Front || null,
+          photoSideGcsPath: photos.Side || null,
+          photoBackGcsPath: photos.Back || null
         });
       } catch (err) {
         console.warn("Backend measurement sync:", err.message);
@@ -713,6 +716,20 @@ function CheckIn({D, data, setData, onComplete, weightUnit, setWeightUnit, measU
             </button>
           </div>
         </GCard>
+      )}
+
+      {/* Voluntary photo upload toggle on standard days */}
+      {!isPhotoDay && !showPhotoReminder && (
+        <div style={{marginBottom:12}}>
+          <button 
+            type="button" 
+            onClick={()=>setShowPhotoSection(s=>!s)}
+            style={{width:"100%",padding:"10px 14px",borderRadius:10,border:`1.5px dashed ${D.pur}60`,background:showPhotoSection?`${D.pur}15`:"transparent",color:D.pur,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
+          >
+            <Ic.Camera c={D.pur} sz={16}/>
+            {showPhotoSection ? "Hide Progress Photos Section ▲" : "+ Upload Progress Photos Today (Front / Side / Back) ▼"}
+          </button>
+        </div>
       )}
 
       {/* ── BI-WEEKLY PROGRESS PHOTOS — Visible every 14 days (or toggled early) ── */}
@@ -958,6 +975,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
     const [savingPrivateNote,setSavingPrivateNote]=useState(false);
     const [privateNoteSavedMsg,setPrivateNoteSavedMsg]=useState("");
     const [viewPhoto,setViewPhoto]=useState(null);
+    const [photosList,setPhotosList]=useState([]);
     const [trendTab,setTrendTab]=useState("all"); // "all" | "weight" | "steps" | "water"
     const [localStatus,setLocalStatus]=useState(c?.status || "active");
     const [nutriDraft,setNutriDraft]=useState(plans?.nutrition||"");
@@ -1001,11 +1019,78 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             if (res.client?.coachFeedback !== undefined) {
               setCoachFeedback(res.client.coachFeedback);
             }
+
+            // Aggregate photos from checkins, measurements, onboarding, and client profile
+            const collected = [];
+
+            // 1. From Check-ins (newest first)
+            (res.checkins || []).forEach(chk => {
+              if (chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)) {
+                collected.push({
+                  id: `checkin_${chk.id || chk.fullDate || chk.date}`,
+                  date: formatDisplayDate(chk.fullDate || chk.date),
+                  rawDate: chk.fullDate || chk.date,
+                  source: "Daily Check-In",
+                  weight: chk.w != null ? `${chk.w} kg` : "—",
+                  photos: chk.photos
+                });
+              }
+            });
+
+            // 2. From Measurements
+            (res.measurements || []).forEach(m => {
+              const pFront = m.photoFrontUrl || m.photoFrontGcsPath;
+              const pSide = m.photoSideUrl || m.photoSideGcsPath;
+              const pBack = m.photoBackUrl || m.photoBackGcsPath;
+              if (pFront || pSide || pBack) {
+                collected.push({
+                  id: `meas_${m.id || m.week}`,
+                  date: formatDisplayDate(m.date) || (m.week != null ? `Week ${m.week}` : "Measurements"),
+                  rawDate: m.date,
+                  source: m.week != null ? `Week ${m.week} Measurements` : "Measurements",
+                  weight: m.weight != null ? `${m.weight} kg` : "—",
+                  photos: { Front: pFront, Side: pSide, Back: pBack }
+                });
+              }
+            });
+
+            // 3. From Onboarding Intake
+            if (res.onboarding) {
+              const ob = res.onboarding;
+              const obFront = ob.photoFront || ob.photoFrontUrl;
+              const obSide = ob.photoSide || ob.photoSideUrl;
+              const obBack = ob.photoBack || ob.photoBackUrl;
+              if (obFront || obSide || obBack) {
+                collected.push({
+                  id: "onboarding_intake",
+                  date: formatDisplayDate(ob.submittedAt || ob.createdAt || res.client?.startDate) || "Day 1 Baseline",
+                  rawDate: ob.submittedAt || ob.createdAt || res.client?.startDate,
+                  source: "Day 1 Baseline (Intake)",
+                  weight: ob.weight != null ? `${ob.weight} kg` : (res.client?.startW != null ? `${res.client.startW} kg` : "Baseline"),
+                  photos: { Front: obFront, Side: obSide, Back: obBack }
+                });
+              }
+            }
+
+            // 4. From Client profile (if direct photos field exists)
+            if (res.client?.photos && (res.client.photos.Front || res.client.photos.Side || res.client.photos.Back)) {
+              collected.push({
+                id: "client_profile_photos",
+                date: formatDisplayDate(res.client.startDate) || "Client Profile",
+                rawDate: res.client.startDate,
+                source: "Profile Upload",
+                weight: res.client.latestW != null ? `${res.client.latestW} kg` : "—",
+                photos: res.client.photos
+              });
+            }
+
+            setPhotosList(collected);
           }
         } catch (err) {
           console.warn("Could not fetch deep dive data:", err.message);
           if (isMounted) {
             setCheckins([]);
+            setPhotosList([]);
             setDeepDiveError("Failed to load client check-ins. Please verify network or database connection.");
           }
         } finally {
@@ -1023,6 +1108,7 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
       try {
         const res = await deleteCoachClientCheckin(clientId, deleteTarget.id, deleteReason.trim());
         setCheckins(prev => prev.filter(chk => chk.id !== deleteTarget.id));
+        setPhotosList(prev => prev.filter(p => p.id !== `checkin_${deleteTarget.id || deleteTarget.fullDate || deleteTarget.date}`));
         setClients(cs => cs.map((cl, i) => i === sel ? {
           ...cl,
           latestW: res.latestW ?? cl.latestW,
@@ -1149,16 +1235,21 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             )}
 
             {/* Latest Progress Photos Thumbnail Preview */}
-            {checkins.length > 0 && checkins[0].photos && (checkins[0].photos.Front || checkins[0].photos.Side || checkins[0].photos.Back) && (
+            {photosList.length > 0 && (
               <div style={{marginTop:12,background:D.c2,border:`1px solid ${D.brd}`,borderRadius:10,padding:"10px 12px"}}>
-                <div style={{fontSize:10,color:D.pur,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",marginBottom:6}}>
-                  📷 Latest Progress Photos ({formatDisplayDate(checkins[0].fullDate || checkins[0].date)})
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <div style={{fontSize:10,color:D.pur,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>
+                    📷 Latest Progress Photos ({photosList[0].date}) · {photosList[0].source}
+                  </div>
+                  {photosList[0].weight && photosList[0].weight !== "—" && (
+                    <span style={{fontSize:10,color:D.g,fontWeight:700}}>{photosList[0].weight}</span>
+                  )}
                 </div>
                 <div style={{display:"flex",gap:8}}>
-                  {["Front","Side","Back"].map(slot => checkins[0].photos[slot] ? (
-                    <div key={slot} onClick={()=>setViewPhoto({url: checkins[0].photos[slot], title: `${c.name} - ${slot} View (${formatDisplayDate(checkins[0].fullDate || checkins[0].date)})`})} style={{cursor:"pointer",borderRadius:8,overflow:"hidden",border:`1px solid ${D.brd}`,width:60,height:80,background:"#000",position:"relative"}}>
-                      <img src={checkins[0].photos[slot]} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:8,textAlign:"center",padding:"2px 0",fontWeight:700}}>{slot}</div>
+                  {["Front","Side","Back"].map(slot => photosList[0].photos?.[slot] ? (
+                    <div key={slot} onClick={()=>setViewPhoto({url: photosList[0].photos[slot], title: `${c.name} - ${slot} View (${photosList[0].date}) · ${photosList[0].source}`})} style={{cursor:"pointer",borderRadius:8,overflow:"hidden",border:`1px solid ${D.brd}`,width:60,height:80,background:"#000",position:"relative"}}>
+                      <img src={photosList[0].photos[slot]} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.65)",color:"#fff",fontSize:8,textAlign:"center",padding:"2px 0",fontWeight:700}}>{slot} 🔍</div>
                     </div>
                   ) : null)}
                 </div>
@@ -1251,41 +1342,80 @@ function ClientDeepDive({D, theme, toggleTheme, sel, setSel, clients, setClients
             )}
           </GCard>
 
-          {/* Progress Photos & Transformation Gallery */}
-          {checkins.some(chk => chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)) && (
-            <GCard D={D} style={{marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <SL D={D} color={D.pur} style={{marginBottom:0}}>Client Transformation & Progress Photos</SL>
-                <div style={{fontSize:11,color:D.ts,fontWeight:600}}>
-                  {checkins.filter(chk => chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)).length} uploads
+          {/* Progress Photos & Submissions (Always visible just below weight trend / trendlines) */}
+          <GCard D={D} style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div>
+                <SL D={D} color={D.pur} style={{marginBottom:2}}>Progress Photos & Submissions</SL>
+                <div style={{fontSize:11,color:D.ts}}>Visual transformation tracking across check-ins and measurements</div>
+              </div>
+              <div style={{fontSize:11,color:D.pur,fontWeight:700,background:`${D.pur}15`,border:`1px solid ${D.pur}30`,padding:"3px 9px",borderRadius:20}}>
+                {photosList.length} submission{photosList.length === 1 ? "" : "s"}
+              </div>
+            </div>
+
+            {photosList.length === 0 ? (
+              <div style={{padding:"28px 16px",textAlign:"center",background:D.c2,borderRadius:12,border:`1px dashed ${D.brd}`}}>
+                <div style={{width:48,height:48,borderRadius:"50%",background:`${D.pur}15`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px",border:`1px solid ${D.pur}30`}}>
+                  <Ic.Camera c={D.pur} sz={22}/>
+                </div>
+                <div style={{fontSize:13,fontWeight:700,color:D.t,marginBottom:4}}>No Progress Photos Submitted Yet</div>
+                <div style={{fontSize:11.5,color:D.ts,lineHeight:1.5,maxWidth:400,margin:"0 auto"}}>
+                  When {c.name} uploads Front, Side, or Back photos during check-ins, measurements, or onboarding, they will appear here with the exact submission date and weight.
                 </div>
               </div>
-              <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                {checkins.filter(chk => chk.photos && (chk.photos.Front || chk.photos.Side || chk.photos.Back)).map(chk => (
-                  <div key={chk.id || chk.fullDate} style={{background:D.c2,borderRadius:10,padding:10,border:`1px solid ${D.brd}`}}>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                      <span style={{fontSize:12,fontWeight:700,color:D.t}}>{formatDisplayDate(chk.fullDate || chk.date)}</span>
-                      <span style={{fontSize:11,fontWeight:700,color:D.g}}>{chk.w} kg</span>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                {photosList.map(sub => (
+                  <div key={sub.id} style={{background:D.c2,borderRadius:12,padding:12,border:`1px solid ${D.brd}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontSize:13,fontWeight:800,color:D.t,display:"flex",alignItems:"center",gap:5}}>
+                          <span>🗓️</span> {sub.date}
+                        </span>
+                        <span style={{fontSize:10,fontWeight:700,color:D.pur,background:`${D.pur}18`,padding:"3px 8px",borderRadius:6,border:`1px solid ${D.pur}30`}}>
+                          {sub.source}
+                        </span>
+                      </div>
+                      {sub.weight && sub.weight !== "—" && (
+                        <span style={{fontSize:12,fontWeight:800,color:D.g,background:D.gG,padding:"2px 8px",borderRadius:6,border:`1px solid ${D.g}30`}}>
+                          {sub.weight}
+                        </span>
+                      )}
                     </div>
+
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                      {["Front","Side","Back"].map(slot => (
-                        <div key={slot} style={{background:D.c1,borderRadius:8,aspectRatio:"3/4",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",border:`1px solid ${D.brd}`,position:"relative"}}>
-                          {chk.photos?.[slot] ? (
-                            <div onClick={()=>setViewPhoto({url: chk.photos[slot], title: `${c.name} - ${slot} View (${formatDisplayDate(chk.fullDate || chk.date)})`})} style={{width:"100%",height:"100%",cursor:"pointer"}}>
-                              <img src={chk.photos[slot]} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                              <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.6)",color:"white",fontSize:9,textAlign:"center",padding:"2px 0",fontWeight:700}}>{slot} 🔍</div>
-                            </div>
-                          ) : (
-                            <span style={{fontSize:10,color:D.tm}}>{slot} —</span>
-                          )}
-                        </div>
-                      ))}
+                      {["Front","Side","Back"].map(slot => {
+                        const photoUrl = sub.photos?.[slot];
+                        return (
+                          <div key={slot} style={{background:D.c1,borderRadius:10,aspectRatio:"3/4",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden",border:`1px solid ${D.brd}`,position:"relative"}}>
+                            {photoUrl ? (
+                              <div 
+                                onClick={()=>setViewPhoto({url: photoUrl, title: `${c.name} - ${slot} View (${sub.date}) · ${sub.source}`})} 
+                                style={{width:"100%",height:"100%",cursor:"pointer",position:"relative"}}
+                                title={`Click to zoom ${slot} photo`}
+                              >
+                                <img src={photoUrl} alt={slot} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                                <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 70%, transparent 100%)",color:"white",fontSize:10,textAlign:"center",padding:"10px 0 4px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                                  <span>{slot}</span>
+                                  <span style={{fontSize:9,opacity:0.85}}>🔍</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{textAlign:"center",padding:6}}>
+                                <div style={{fontSize:10,fontWeight:600,color:D.tm,marginBottom:2}}>{slot}</div>
+                                <div style={{fontSize:9,color:D.tm}}>—</div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
               </div>
-            </GCard>
-          )}
+            )}
+          </GCard>
 
           {/* Check-In History & Log Management with Soft Deletion */}
           <GCard D={D} style={{marginBottom:12}}>
@@ -1908,7 +2038,7 @@ function MeSubScreen({D,sub,onBack,data,onboardingData,setOnboardingData,plans})
     <button onClick={onBack} style={{background:"none",border:"none",color:D.acc,cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:700,marginBottom:16}}><Ic.Chevron c={D.acc} sz={15} dir="left"/> My Profile</button>
     <div style={{fontSize:19,fontWeight:900,color:D.t,marginBottom:16}}>{titles[sub]}</div>
     {sub==="blood" && <BloodReportsSub D={D}/>}
-    {sub==="photos" && <ProgressPhotosSub D={D} data={data}/>}
+    {sub==="photos" && <ProgressPhotosSub D={D} data={data} onboardingData={onboardingData}/>}
     {sub==="onboarding" && <OnboardingFormSub D={D} onboardingData={onboardingData} setOnboardingData={setOnboardingData}/>}
     {sub==="history" && <CheckInHistorySub D={D} data={data}/>}
     {sub==="nutrition" && <PlanSub D={D} plan={plans?.nutrition} c={D.g} empty="No nutrition plan pushed yet."/>}
@@ -1958,15 +2088,11 @@ function BloodReportsSub({D}) {
       <input ref={fileRef} type="file" accept="application/pdf,.pdf" onChange={handleUpload} style={{display:"none"}}/>
       <div style={{width:52,height:52,borderRadius:14,background:D.rG,border:`1px solid ${D.r}30`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}><Ic.Upload c={D.r} sz={24}/></div>
       <div style={{fontSize:13,color:D.t,fontWeight:700,marginBottom:4}}>Upload Blood Report</div>
-      <div style={{fontSize:11,color:D.ts,marginBottom:16}}>PDF only · Uploaded directly to private Cloud Storage</div>
-      <button onClick={()=>fileRef.current?.click()} disabled={uploading} style={{padding:"11px 20px",background:D.r,border:"none",borderRadius:12,color:"white",fontWeight:700,fontSize:13,cursor:uploading?"not-allowed":"pointer",opacity:uploading?0.7:1}}>
-        {uploading ? "Uploading to Cloud Storage..." : "Choose PDF"}
-      </button>
+      <div style={{fontSize:11,color:D.ts,marginBottom:14,lineHeight:1.5}}>PDF format only. Ram reviews blood markers to customise your nutrition and supplement plan.</div>
+      <button onClick={()=>fileRef.current?.click()} disabled={uploading} style={{padding:"10px 20px",borderRadius:10,background:uploading?D.c3:D.r,border:"none",color:"white",fontWeight:700,fontSize:13,cursor:uploading?"not-allowed":"pointer"}}>{uploading?"Uploading...":"Choose PDF File"}</button>
     </GCard>
-    {reports.length===0
-      ? <div style={{textAlign:"center",fontSize:12,color:D.tm,padding:20}}>No reports uploaded yet.</div>
-      : reports.map((r,i)=>(
-        <GCard key={i} D={D} style={{marginBottom:8,padding:14,display:"flex",alignItems:"center",gap:12}}>
+    {reports.length>0 && reports.map((r,i)=>(
+        <GCard key={i} D={D} style={{display:"flex",alignItems:"center",gap:12,marginBottom:8,padding:"10px 14px"}}>
           <div style={{width:38,height:38,borderRadius:10,background:D.rG,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic.FilePdf c={D.r} sz={18}/></div>
           <div style={{flex:1,minWidth:0,cursor:r.downloadUrl?"pointer":"default"}} onClick={()=>r.downloadUrl&&window.open(r.downloadUrl,"_blank")}>
             <div style={{fontSize:12,fontWeight:700,color:D.t,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</div>
@@ -1978,12 +2104,35 @@ function BloodReportsSub({D}) {
   </>;
 }
 
-function ProgressPhotosSub({D,data}) {
-  const withPhotos=data.filter(d=>d.photos && (d.photos.Front||d.photos.Side||d.photos.Back));
-  if (withPhotos.length===0) return <div style={{textAlign:"center",fontSize:12,color:D.tm,padding:30}}>No progress photos uploaded yet — they'll appear here after your weekly measurement day.</div>;
-  return <>{withPhotos.map((d,i)=>(
+function ProgressPhotosSub({D,data,onboardingData}) {
+  const list = [];
+  (data || []).forEach(d => {
+    if (d.photos && (d.photos.Front || d.photos.Side || d.photos.Back)) {
+      list.push({
+        date: formatDisplayDate(d.fullDate || d.date),
+        photos: d.photos,
+        source: "Check-In"
+      });
+    }
+  });
+  if (onboardingData?.photoFront || onboardingData?.photoSide || onboardingData?.photoBack) {
+    list.push({
+      date: formatDisplayDate(onboardingData.submittedAt || onboardingData.createdAt) || "Day 1 Baseline",
+      photos: {
+        Front: onboardingData.photoFront,
+        Side: onboardingData.photoSide,
+        Back: onboardingData.photoBack
+      },
+      source: "Day 1 Baseline (Intake)"
+    });
+  }
+  if (list.length===0) return <div style={{textAlign:"center",fontSize:12,color:D.tm,padding:30}}>No progress photos uploaded yet — they'll appear here after your weekly measurement day or check-in upload.</div>;
+  return <>{list.map((d,i)=>(
     <GCard key={i} D={D} style={{marginBottom:12,padding:14}}>
-      <div style={{fontSize:11,color:D.ts,fontWeight:700,marginBottom:10}}>{d.date}</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontSize:11,color:D.ts,fontWeight:700}}>{d.date}</div>
+        <span style={{fontSize:9,color:D.pur,fontWeight:600,background:`${D.pur}15`,padding:"2px 6px",borderRadius:4}}>{d.source}</span>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
         {["Front","Side","Back"].map(v=>(
           <div key={v} style={{aspectRatio:"3/4",borderRadius:8,overflow:"hidden",background:D.c2,display:"flex",alignItems:"center",justifyContent:"center",border:`1px solid ${D.brd}`}}>
@@ -2581,7 +2730,7 @@ function OnboardingScreen({D,onComplete}) {
               : <label style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:28,background:D.c2,borderRadius:12,border:`2px dashed ${D.brd}`,cursor:"pointer"}}>
                   <Ic.Camera c={D.tm} sz={24}/>
                   <span style={{fontSize:12,color:D.tm}}>Tap to upload</span>
-                  <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>F(key,ev.target.result);r.readAsDataURL(f);}}}/>
+                  <input type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{const f=e.target.files[0];if(f){const c=await compressImage(f);if(c)F(key,c);}}}/>
                 </label>
             }
           </GCard>
